@@ -1,0 +1,4 @@
+A, B => A & B by andR {
+  A, B => A by axiom,
+  A, B => A by axiom
+}

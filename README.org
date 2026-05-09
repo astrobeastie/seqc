@@ -1,0 +1,106 @@
+#+TITLE: seqc
+
+A checker for cut-free sequent-calculus proofs of classical FOL.
+
+* Build
+
+#+begin_src sh
+cargo build --release
+#+end_src
+
+The binary lands at ~target/release/seqc~.
+
+* Usage
+
+#+begin_src sh
+seqc <proof-file>
+#+end_src
+
+* Syntax
+
+Identifiers are alphanumerics + ~_~ + ~'~, starting with a letter or
+~_~.  Whitespace is ignored.
+
+** Expressions (terms)
+
+#+begin_example
+t  ::=  x                       -- variable
+     |  f(t1, ..., tn)          -- function application (n ≥ 1)
+#+end_example
+
+A bare identifier is read as a variable; an identifier immediately
+followed by ~(...)~ is a function applied to comma-separated argument
+terms.  A variable is bound if it lies under a quantifier with the
+same name, otherwise it is free.
+
+** Formulas
+
+#+begin_example
+F  ::=  ⊥  |  ⊤
+     |  P  |  P(t1, ..., tn)    -- atomic predicate
+     |  ¬F
+     |  F ∧ F   |  F ∨ F  |  F → F
+     |  ∀x. F   |  ∃x. F
+#+end_example
+
+Each connective has both an ASCII spelling and a Unicode glyph; either
+form may be used (and mixed) freely:
+
+| connective  | ASCII                 | Unicode |
+|-------------+-----------------------+---------|
+| bottom      | ~0~                     | ~⊥~       |
+| top         | ~1~                     | ~⊤~       |
+| negation    | =~​F=, ~!F~                | ~¬F~      |
+| conjunction | ~F & G~, ~F and G~        | ~F ∧ G~   |
+| disjunction | ~F|G~, ~F or G~         | ~F ∨ G~   |
+| implication | ~F -> G~                | ~F → G~   |
+| universal   | ~forall x. F~, ~all x. F~ | ~∀x. F~   |
+| existential | ~exists x. F~           | ~∃x. F~   |
+
+Precedence, tightest first: atoms / quantifiers / negation, ~∧~, ~∨~,
+~→~.  ~∧~ and ~∨~ are left-associative; ~→~ is right-associative.
+
+** Sequents and proof trees
+
+A sequent is
+
+#+begin_example
+F1, ..., Fm => G1, ..., Gn          -- ASCII: =>
+F1, ..., Fm ⇒ G1, ..., Gn           -- Unicode: ⇒
+#+end_example
+
+Either side of the arrow may be empty.
+
+A proof tree is
+
+#+begin_example
+<sequent> by <rule>                              -- nullary (axiom, botL)
+<sequent> by <rule> { <subproof> }               -- unary
+<sequent> by <rule> { <subproof>, <subproof> }   -- binary
+#+end_example
+
+Rule keywords: ~axiom~, ~botL~, ~negL~, ~negR~, ~andL~, ~andR~,
+~orL~, ~orR~, ~impL~, ~impR~, ~forallL~, ~forallR~, ~existsL~,
+~existsR~.
+
+* Rules
+
+~Γ~, ~Δ~ are sets of formulas; ~t~ is any term; ~y~ is an
+eigenvariable; ~F[t/x]~ is capture-avoiding substitution.
+
+[[file:proof-rules.svg]]
+
+* Example
+
+#+begin_src
+=> A & B -> B & A by impR {
+  A & B => B & A by andR {
+    A & B => B by andL { A, B => B by axiom },
+    A & B => A by andL { A, B => A by axiom }
+  }
+}
+#+end_src
+
+See ~proofs/~ for more (~valid_*~ check, ~bad_*~ are intentionally
+broken — e.g. ~bad_forall_right_captures_eigenvar.proof~ violates the
+freshness condition (∗)).

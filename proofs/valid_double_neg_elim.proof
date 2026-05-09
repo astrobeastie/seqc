@@ -1,0 +1,7 @@
+=> ~~A -> A by impR {
+  ~~A => A by negL {
+    => ~A, A by negR {
+      A => A by axiom
+    }
+  }
+}

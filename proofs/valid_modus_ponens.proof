@@ -1,0 +1,4 @@
+A, A -> B => B by impL {
+  A, A -> B => A by axiom,
+  A, B, A -> B => B by axiom
+}

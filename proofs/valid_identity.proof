@@ -1,0 +1,3 @@
+=> A -> A by impR {
+  A => A by axiom
+}

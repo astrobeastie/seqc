@@ -1,0 +1,10 @@
+=> A & B -> B & A by impR {
+  A & B => B & A by andR {
+    A & B => B by andL {
+      A, B => B by axiom
+    },
+    A & B => A by andL {
+      A, B => A by axiom
+    }
+  }
+}

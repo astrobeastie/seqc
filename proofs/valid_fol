@@ -1,0 +1,22 @@
+=> exists x . forall y . ~ (P(x,y) | Q(x,y)) -> forall x . exists y . (~P(y,x) & ~ Q(y,x)) by impR {
+	exists x . forall y . ~ (P(x,y) | Q(x,y)) => forall x . exists y . (~P(y,x) & ~ Q(y,x)) by existsL {
+		forall y . ~ (P(z,y) | Q(z,y)) => forall x . exists y . (~P(y,x) & ~ Q(y,x)) by forallR {
+			forall y . ~ (P(z,y) | Q(z,y)) => exists y . (~P(y,w) & ~ Q(y,w)) by existsR {
+				forall y . ~ (P(z,y) | Q(z,y)) => (~P(z,w) & ~ Q(z,w)) by forallL {
+					~ (P(z,w) | Q(z,w)) => (~P(z,w) & ~ Q(z,w)) by negL {
+						=> P(z,w) | Q(z,w) , (~P(z,w) & ~ Q(z,w)) by orR {
+							=> P(z,w) , Q(z,w) , (~P(z,w) & ~ Q(z,w)) by andR {
+								=> P(z,w), ~P(z,w) by negR {
+									P(z,w) => P(z,w) by axiom
+								},
+								=> Q(z,w) , ~ Q(z,w) by negR {
+									Q(z,w) => Q(z,w) by axiom
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

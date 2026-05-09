@@ -1,0 +1,3 @@
+P(y) => forall x. P(x) by forallR {
+  P(y) => P(y) by axiom
+}

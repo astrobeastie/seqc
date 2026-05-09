@@ -1,0 +1,5 @@
+=> forall x. exists y. P(x, y) -> exists y. P(y, y) by impR {
+  forall x. exists y. P(x, y) => exists y. P(y, y) by forallL {
+    exists y. P(y, y) => exists y. P(y, y) by axiom
+  }
+}

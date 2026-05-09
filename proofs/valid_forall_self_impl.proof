@@ -1,0 +1,5 @@
+=> forall x. (P(x) -> P(x)) by forallR {
+  => P(y) -> P(y) by impR {
+    P(y) => P(y) by axiom
+  }
+}

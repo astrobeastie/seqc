@@ -1,4 +1,4 @@
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 
 use crate::expr::Expr;
 use crate::formula::{BinOp, Formula, Sequent};
@@ -26,7 +26,6 @@ pub struct Parser {
     current_token: Token,
     current_pos: usize,
 }
-
 
 impl Parser {
     pub fn new(input: String) -> ParseResult<Self> {
@@ -97,7 +96,10 @@ impl Parser {
         }
     }
 
-    pub fn parse_atomic_formula(&mut self, bound_vars: &HashMap<String, usize>) -> ParseResult<Formula> {
+    pub fn parse_atomic_formula(
+        &mut self,
+        bound_vars: &HashMap<String, usize>,
+    ) -> ParseResult<Formula> {
         let start = self.current_pos;
         match &self.current_token {
             Token::Bot => {
@@ -135,16 +137,16 @@ impl Parser {
             }
             Token::Not => {
                 self.advance()?;
-                let formula = self.parse_atomic_formula(bound_vars).ctx(|| {
-                    format!("while parsing operand of negation at byte {}", start)
-                })?;
+                let formula = self
+                    .parse_atomic_formula(bound_vars)
+                    .ctx(|| format!("while parsing operand of negation at byte {}", start))?;
                 Ok(Formula::Not(Box::new(formula)))
             }
             Token::LeftParen => {
                 self.advance()?;
-                let formula = self.parse_formula_inner(0, bound_vars).ctx(|| {
-                    format!("while parsing parenthesized formula at byte {}", start)
-                })?;
+                let formula = self
+                    .parse_formula_inner(0, bound_vars)
+                    .ctx(|| format!("while parsing parenthesized formula at byte {}", start))?;
                 self.expect(Token::RightParen)?;
                 Ok(formula)
             }
@@ -161,18 +163,21 @@ impl Parser {
                             "expected bound variable at byte {}, found {:?}",
                             self.current_pos, self.current_token,
                         )])
-                        .ctx(|| {
-                            format!("while parsing forall-quantifier at byte {}", start)
-                        });
+                        .ctx(|| format!("while parsing forall-quantifier at byte {}", start));
                     }
                 };
                 self.expect(Token::Dot)?;
                 let mut new_bound_vars = bound_vars.clone();
-                let next_idx = new_bound_vars.values().copied().max().map(|m| m + 1).unwrap_or(0);
+                let next_idx = new_bound_vars
+                    .values()
+                    .copied()
+                    .max()
+                    .map(|m| m + 1)
+                    .unwrap_or(0);
                 new_bound_vars.insert(var.clone(), next_idx);
-                let body = self.parse_atomic_formula(&new_bound_vars).ctx(|| {
-                    format!("while parsing body of forall-quantifier at byte {}", start)
-                })?;
+                let body = self
+                    .parse_atomic_formula(&new_bound_vars)
+                    .ctx(|| format!("while parsing body of forall-quantifier at byte {}", start))?;
                 Ok(Formula::All(var, Box::new(body)))
             }
             Token::Exists => {
@@ -188,18 +193,21 @@ impl Parser {
                             "expected bound variable at byte {}, found {:?}",
                             self.current_pos, self.current_token,
                         )])
-                        .ctx(|| {
-                            format!("while parsing exists-quantifier at byte {}", start)
-                        });
+                        .ctx(|| format!("while parsing exists-quantifier at byte {}", start));
                     }
                 };
                 self.expect(Token::Dot)?;
                 let mut new_bound_vars = bound_vars.clone();
-                let next_idx = new_bound_vars.values().copied().max().map(|m| m + 1).unwrap_or(0);
+                let next_idx = new_bound_vars
+                    .values()
+                    .copied()
+                    .max()
+                    .map(|m| m + 1)
+                    .unwrap_or(0);
                 new_bound_vars.insert(var.clone(), next_idx);
-                let body = self.parse_atomic_formula(&new_bound_vars).ctx(|| {
-                    format!("while parsing body of exists-quantifier at byte {}", start)
-                })?;
+                let body = self
+                    .parse_atomic_formula(&new_bound_vars)
+                    .ctx(|| format!("while parsing body of exists-quantifier at byte {}", start))?;
                 Ok(Formula::Exists(var, Box::new(body)))
             }
             _ => Err(vec![format!(
@@ -218,7 +226,11 @@ impl Parser {
         }
     }
 
-    fn parse_formula_inner(&mut self, min_prec: u8, bound_vars: &HashMap<String,usize>) -> ParseResult<Formula> {
+    fn parse_formula_inner(
+        &mut self,
+        min_prec: u8,
+        bound_vars: &HashMap<String, usize>,
+    ) -> ParseResult<Formula> {
         let mut lhs = self.parse_atomic_formula(bound_vars)?;
         while let Some(op) = self.peek_binop() {
             let (l_prec, r_prec) = op.assoc().child_mins(op.prec());
@@ -228,9 +240,9 @@ impl Parser {
             }
             let op_pos = self.current_pos;
             self.advance()?;
-            let rhs = self.parse_formula_inner(r_prec, bound_vars).ctx(|| {
-                format!("while parsing rhs of binary operator at byte {}", op_pos)
-            })?;
+            let rhs = self
+                .parse_formula_inner(r_prec, bound_vars)
+                .ctx(|| format!("while parsing rhs of binary operator at byte {}", op_pos))?;
             lhs = match op {
                 BinOp::And => Formula::And(Box::new(lhs), Box::new(rhs)),
                 BinOp::Or => Formula::Or(Box::new(lhs), Box::new(rhs)),
@@ -248,7 +260,8 @@ impl Parser {
         let mut assumptions = HashSet::new();
         while !matches!(self.current_token, Token::SequentArrow | Token::EOF) {
             let f_pos = self.current_pos;
-            let formula = self.parse_formula()
+            let formula = self
+                .parse_formula()
                 .ctx(|| format!("while parsing assumption at byte {}", f_pos))?;
             assumptions.insert(formula);
             if self.current_token == Token::Comma {
@@ -264,7 +277,8 @@ impl Parser {
             Token::EOF | Token::Keyword(_) | Token::RightBrace
         ) {
             let f_pos = self.current_pos;
-            let formula = self.parse_formula()
+            let formula = self
+                .parse_formula()
                 .ctx(|| format!("while parsing conclusion at byte {}", f_pos))?;
             conclusions.insert(formula);
             if self.current_token == Token::Comma {
@@ -273,12 +287,16 @@ impl Parser {
                 break;
             }
         }
-        Ok(Sequent { assumptions, conclusions })
+        Ok(Sequent {
+            assumptions,
+            conclusions,
+        })
     }
 
     pub fn parse_proof(&mut self) -> ParseResult<Proof> {
         let start = self.current_pos;
-        let claim = self.parse_sequent()
+        let claim = self
+            .parse_sequent()
             .ctx(|| format!("while parsing claim at byte {}", start))?;
         self.expect(Token::Keyword(Keyword::By))?;
         let kw = match &self.current_token {
@@ -341,12 +359,19 @@ impl Parser {
         if has_body {
             self.expect(Token::RightBrace)?;
         }
-        Ok(Proof { claim, proof: proof_step })
+        Ok(Proof {
+            claim,
+            proof: proof_step,
+        })
     }
 
     fn parse_sub_proof(&mut self, label: &str, parent_start: usize) -> ParseResult<Box<Proof>> {
-        let p = self.parse_proof()
-            .ctx(|| format!("while parsing sub-proof of {} at byte {}", label, parent_start))?;
+        let p = self.parse_proof().ctx(|| {
+            format!(
+                "while parsing sub-proof of {} at byte {}",
+                label, parent_start
+            )
+        })?;
         Ok(Box::new(p))
     }
 }
@@ -375,17 +400,13 @@ mod tests {
 
     #[test]
     fn forall_in_formula_parses() {
-        let r = parse(
-            "=> forall x. P(x) -> P(x) by impR { P(x) => P(x) by axiom }",
-        );
+        let r = parse("=> forall x. P(x) -> P(x) by impR { P(x) => P(x) by axiom }");
         assert!(r.is_ok(), "expected ok, got {:?}", r.err());
     }
 
     #[test]
     fn forall_left_body_is_plain_subproof() {
-        let r = parse(
-            "forall x. P(x) => P(a) by forallL { P(a) => P(a) by axiom }",
-        );
+        let r = parse("forall x. P(x) => P(a) by forallL { P(a) => P(a) by axiom }");
         assert!(r.is_ok(), "expected ok, got {:?}", r.err());
     }
 
@@ -394,7 +415,9 @@ mod tests {
         let r = parse("=> A by foo { }");
         let trace = r.err().expect("expected err");
         assert!(
-            trace.iter().any(|s| s.contains("expected proof step keyword")),
+            trace
+                .iter()
+                .any(|s| s.contains("expected proof step keyword")),
             "trace: {:?}",
             trace,
         );

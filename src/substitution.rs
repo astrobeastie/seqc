@@ -138,7 +138,7 @@ impl Subst for Formula {
                         .chain(sigma.bindings.values().flat_map(|t| t.free_vars()))
                         .collect();
                     let fresh = new_free_var(all_vars, vec![y]);
-                        Formula::Exists(fresh, Box::new(body.subst(&sigma.lift())))
+                    Formula::Exists(fresh, Box::new(body.subst(&sigma.lift())))
                 } else {
                     Formula::Exists(y.clone(), Box::new(body.subst(&sigma.lift())))
                 }
@@ -222,10 +222,7 @@ mod tests {
         // σ = {0 → f(Bound(3))}, applied to P(Bound(0)).
         // Result: P(f(Bound(3))).
         let template = body_of_forall("forall x. P(x)");
-        let sigma = Substitution::singleton(
-            0,
-            Expr::Func("f".to_string(), vec![Expr::Bound(3)]),
-        );
+        let sigma = Substitution::singleton(0, Expr::Func("f".to_string(), vec![Expr::Bound(3)]));
         let expected = Formula::Pred(
             "P".to_string(),
             vec![Expr::Func("f".to_string(), vec![Expr::Bound(3)])],
@@ -255,10 +252,7 @@ mod tests {
         // σ₁.then(σ₂) applies σ₂ to σ₁'s values:
         //   0 -> f(Bound(1)).subst({1 -> a}) = f(a).
         // Then carries σ₂'s 1 -> a over (key 1 not in σ₁).
-        let sigma1 = Substitution::singleton(
-            0,
-            Expr::Func("f".to_string(), vec![Expr::Bound(1)]),
-        );
+        let sigma1 = Substitution::singleton(0, Expr::Func("f".to_string(), vec![Expr::Bound(1)]));
         let sigma2 = Substitution::singleton(1, Expr::Free("a".to_string()));
         let composed = sigma1.then(&sigma2);
 
@@ -272,4 +266,3 @@ mod tests {
         assert_eq!(composed.lookup(1), Some(&Expr::Free("a".to_string())));
     }
 }
-

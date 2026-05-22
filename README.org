@@ -1,6 +1,7 @@
 #+TITLE: seqc
 
-A checker for cut-free sequent-calculus proofs of classical FOL.
+A checker and prover for cut-free sequent-calculus proofs of
+classical FOL.
 
 * Build
 
@@ -13,8 +14,13 @@ The binary lands at ~target/release/seqc~.
 * Usage
 
 #+begin_src sh
-seqc <proof-file>
+seqc verify <proof-file>
+seqc prove  <formula-or-sequent>
 #+end_src
+
+~verify~ type-checks a proof tree from a file.  ~prove~ searches for
+a proof of the given formula or sequent and prints it in the same
+syntax (so it can be piped back through ~verify~).
 
 * Syntax
 

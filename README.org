@@ -15,12 +15,19 @@ The binary lands at ~target/release/seqc~.
 
 #+begin_src sh
 seqc verify <proof-file>
-seqc prove  <formula-or-sequent>
+seqc prove  [--latex|--typst] <formula-or-sequent>
+seqc latex  <proof-file>
+seqc typst  <proof-file>
 #+end_src
 
 ~verify~ type-checks a proof tree from a file.  ~prove~ searches for
 a proof of the given formula or sequent and prints it in the same
 syntax (so it can be piped back through ~verify~).
+
+~latex~ and ~typst~ re-render a proof file as a typeset proof tree
+using the LaTeX [[https://ctan.org/pkg/bussproofs][~bussproofs~]] package or the Typst
+[[https://typst.app/universe/package/curryst][~curryst~]] package respectively.  The same rendering is available
+inline by passing ~--latex~ or ~--typst~ to ~prove~.
 
 * Syntax
 

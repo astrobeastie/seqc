@@ -824,11 +824,11 @@ impl Formula {
 }
 
 // Precedences for non-binary syntactic forms.
-const PREC_ATOM: u8 = 100;
-const PREC_NEG: u8 = 90;
+pub const PREC_ATOM: u8 = 100;
+pub const PREC_NEG: u8 = 90;
 // Quantifiers bind only the next atomic formula (same as negation), so they
 // share negation's precedence — a quantifier as a binop child needs no parens.
-const PREC_QUANT: u8 = 90;
+pub const PREC_QUANT: u8 = 90;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Assoc {
@@ -887,7 +887,7 @@ impl Formula {
         Formula::Not(Box::new(self.clone()))
     }
 
-    fn prec(&self) -> u8 {
+    pub fn prec(&self) -> u8 {
         match self {
             Formula::Bot | Formula::Top | Formula::Pred(_, _) => PREC_ATOM,
             Formula::Not(_) => PREC_NEG,

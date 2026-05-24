@@ -73,9 +73,13 @@ A sequent is
 #+begin_example
 F1, ..., Fm => G1, ..., Gn          -- ASCII: =>
 F1, ..., Fm ⇒ G1, ..., Gn           -- Unicode: ⇒
+a, b, c : F1, ..., Fm => G1, ..., Gn -- with extra constants in scope
 #+end_example
 
-Either side of the arrow may be empty.
+Either side of the arrow may be empty.  An optional ~a, b, c :~
+prefix declares additional constants in scope for this sequent
+(typically introduced by an outer ~existsL~ / ~forallR~); the colon is
+omitted when there are none.
 
 A proof tree is
 
@@ -107,6 +111,6 @@ eigenvariable; ~F[t/x]~ is capture-avoiding substitution.
 }
 #+end_src
 
-See ~proofs/~ for more (~valid_*~ check, ~bad_*~ are intentionally
-broken — e.g. ~bad_forall_right_captures_eigenvar.proof~ violates the
-freshness condition (∗)).
+See ~proofs/valid/~ and ~proofs/bad/~ for more (~bad/~ proofs are
+intentionally broken — e.g. ~bad/forall_right_captures_eigenvar.proof~
+violates the freshness condition (∗)).

@@ -1,0 +1,5 @@
+=> P | ~P by orR {
+  => P, ~P by negR {
+    P => P by axiom
+  }
+}

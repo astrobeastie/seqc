@@ -137,6 +137,12 @@ impl Expr {
         }
     }
 
+    pub fn constants_with_arity(&self) -> HashSet<(String, usize)> {
+        let mut symbols = HashSet::new();
+        self.collect_constants(&mut symbols);
+        symbols
+    }
+
     pub fn collect_constants(&self, symbols: &mut HashSet<(String, usize)>) {
         match self {
             Expr::Bound(_) => {}

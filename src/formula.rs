@@ -92,12 +92,17 @@ impl Hash for Formula {
 pub struct Sequent {
     pub assumptions: HashSet<Formula>,
     pub conclusions: HashSet<Formula>,
+    /// Names introduced by ∃L / ∀R that may not appear in any formula
+    /// (e.g. when the quantifier body did not mention the bound variable).
+    /// Tracked so they remain available as witnesses and so freshness
+    /// checks correctly treat them as in-scope.
+    pub eigenvars: HashSet<String>,
 }
 
 impl Hash for Sequent {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // Order-independent hash via XOR of per-element finishes.
-        let combine = |set: &HashSet<Formula>| -> u64 {
+        let combine_f = |set: &HashSet<Formula>| -> u64 {
             set.iter()
                 .map(|f| {
                     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -106,8 +111,18 @@ impl Hash for Sequent {
                 })
                 .fold(0u64, |acc, x| acc ^ x)
         };
-        state.write_u64(combine(&self.assumptions));
-        state.write_u64(combine(&self.conclusions));
+        let combine_s = |set: &HashSet<String>| -> u64 {
+            set.iter()
+                .map(|s| {
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    s.hash(&mut h);
+                    std::hash::Hasher::finish(&h)
+                })
+                .fold(0u64, |acc, x| acc ^ x)
+        };
+        state.write_u64(combine_f(&self.assumptions));
+        state.write_u64(combine_f(&self.conclusions));
+        state.write_u64(combine_s(&self.eigenvars));
     }
 }
 
@@ -122,6 +137,7 @@ impl Sequent {
         for f in self.assumptions.iter().chain(self.conclusions.iter()) {
             f.collect_free_vars(vars);
         }
+        vars.extend(self.eigenvars.iter().cloned());
     }
 
     pub fn proof_search(&self, max_depth: usize) -> Option<Proof> {
@@ -168,6 +184,7 @@ impl Sequent {
                 let new_sequent = Sequent {
                     assumptions: new_assms,
                     conclusions: new_concs,
+                    eigenvars: self.eigenvars.clone(),
                 };
                 if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
                     return Some(Proof {
@@ -184,6 +201,7 @@ impl Sequent {
                 let new_sequent = Sequent {
                     assumptions: new_assms,
                     conclusions: self.conclusions.clone(),
+                    eigenvars: self.eigenvars.clone(),
                 };
                 if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
                     return Some(Proof {
@@ -200,6 +218,7 @@ impl Sequent {
                 let seqa = Sequent {
                     assumptions: new_assms_a,
                     conclusions: self.conclusions.clone(),
+                    eigenvars: self.eigenvars.clone(),
                 };
                 let mut new_assms_b = self.assumptions.clone();
                 new_assms_b.remove(f);
@@ -207,6 +226,7 @@ impl Sequent {
                 let seqb = Sequent {
                     assumptions: new_assms_b,
                     conclusions: self.conclusions.clone(),
+                    eigenvars: self.eigenvars.clone(),
                 };
                 if let (Some(proofa), Some(proofb)) = (
                     seqa.proof_search_memo(max_depth - 1, memo),
@@ -227,6 +247,7 @@ impl Sequent {
                 let seq1 = Sequent {
                     assumptions: new_assms_1,
                     conclusions: new_concs_1,
+                    eigenvars: self.eigenvars.clone(),
                 };
                 let mut new_assms_2 = self.assumptions.clone();
                 new_assms_2.remove(f);
@@ -234,6 +255,7 @@ impl Sequent {
                 let seq2 = Sequent {
                     assumptions: new_assms_2,
                     conclusions: self.conclusions.clone(),
+                    eigenvars: self.eigenvars.clone(),
                 };
                 if let (Some(proof1), Some(proof2)) = (
                     seq1.proof_search_memo(max_depth - 1, memo),
@@ -250,10 +272,13 @@ impl Sequent {
                 let mut new_assms = self.assumptions.clone();
                 new_assms.remove(f);
                 let free_var = self.new_free_var(vec![x]);
-                new_assms.insert(body.instantiate(&Expr::Free(free_var)));
+                new_assms.insert(body.instantiate(&Expr::Free(free_var.clone())));
+                let mut new_eigenvars = self.eigenvars.clone();
+                new_eigenvars.insert(free_var);
                 let new_sequent = Sequent {
                     assumptions: new_assms,
                     conclusions: self.conclusions.clone(),
+                    eigenvars: new_eigenvars,
                 };
                 if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
                     return Some(Proof {
@@ -276,6 +301,7 @@ impl Sequent {
                 let new_sequent = Sequent {
                     assumptions: new_assms,
                     conclusions: new_concs,
+                    eigenvars: self.eigenvars.clone(),
                 };
                 if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
                     return Some(Proof {
@@ -292,6 +318,7 @@ impl Sequent {
                 let seqa = Sequent {
                     assumptions: self.assumptions.clone(),
                     conclusions: new_concs_a,
+                    eigenvars: self.eigenvars.clone(),
                 };
                 let mut new_concs_b = self.conclusions.clone();
                 new_concs_b.remove(f);
@@ -299,6 +326,7 @@ impl Sequent {
                 let seqb = Sequent {
                     assumptions: self.assumptions.clone(),
                     conclusions: new_concs_b,
+                    eigenvars: self.eigenvars.clone(),
                 };
                 if let (Some(proofa), Some(proofb)) = (
                     seqa.proof_search_memo(max_depth - 1, memo),
@@ -318,6 +346,7 @@ impl Sequent {
                 let new_sequent = Sequent {
                     assumptions: self.assumptions.clone(),
                     conclusions: new_concs,
+                    eigenvars: self.eigenvars.clone(),
                 };
                 if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
                     return Some(Proof {
@@ -336,6 +365,7 @@ impl Sequent {
                 let new_sequent = Sequent {
                     assumptions: new_assms,
                     conclusions: new_concs,
+                    eigenvars: self.eigenvars.clone(),
                 };
                 if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
                     return Some(Proof {
@@ -349,10 +379,13 @@ impl Sequent {
                 let mut new_concs = self.conclusions.clone();
                 new_concs.remove(f);
                 let free_var = self.new_free_var(vec![x]);
-                new_concs.insert(body.instantiate(&Expr::Free(free_var)));
+                new_concs.insert(body.instantiate(&Expr::Free(free_var.clone())));
+                let mut new_eigenvars = self.eigenvars.clone();
+                new_eigenvars.insert(free_var);
                 let new_sequent = Sequent {
                     assumptions: self.assumptions.clone(),
                     conclusions: new_concs,
+                    eigenvars: new_eigenvars,
                 };
                 if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
                     return Some(Proof {
@@ -375,6 +408,7 @@ impl Sequent {
                     let new_sequent = Sequent {
                         assumptions: new_assms,
                         conclusions: self.conclusions.clone(),
+                        eigenvars: self.eigenvars.clone(),
                     };
                     if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
                         return Some(Proof {
@@ -391,6 +425,7 @@ impl Sequent {
                         let new_sequent = Sequent {
                             assumptions: new_assms,
                             conclusions: self.conclusions.clone(),
+                            eigenvars: self.eigenvars.clone(),
                         };
                         return Some(Proof {
                             claim: self.clone(),
@@ -415,6 +450,7 @@ impl Sequent {
                     let new_sequent = Sequent {
                         assumptions: self.assumptions.clone(),
                         conclusions: new_concs,
+                        eigenvars: self.eigenvars.clone(),
                     };
                     if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
                         return Some(Proof {
@@ -431,6 +467,7 @@ impl Sequent {
                         let new_sequent = Sequent {
                             assumptions: self.assumptions.clone(),
                             conclusions: new_concs,
+                            eigenvars: self.eigenvars.clone(),
                         };
                         return Some(Proof {
                             claim: self.clone(),
@@ -479,6 +516,7 @@ impl Sequent {
                     let new_sequent = Sequent {
                         assumptions: new_assms,
                         conclusions: self.conclusions.clone(),
+                        eigenvars: self.eigenvars.clone(),
                     };
                     if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
                         return Some(Proof {
@@ -502,6 +540,7 @@ impl Sequent {
                     let new_sequent = Sequent {
                         assumptions: self.assumptions.clone(),
                         conclusions: new_concs,
+                        eigenvars: self.eigenvars.clone(),
                     };
                     if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
                         return Some(Proof {
@@ -524,6 +563,9 @@ impl Sequent {
         for f in self.assumptions.iter().chain(self.conclusions.iter()) {
             f.collect_constants(&mut symbols);
         }
+        for ev in &self.eigenvars {
+            symbols.insert((ev.clone(), 0));
+        }
         symbols
     }
 
@@ -531,6 +573,9 @@ impl Sequent {
         let mut terms = HashSet::new();
         for f in self.assumptions.iter().chain(self.conclusions.iter()) {
             f.collect_closed_subterms(&mut terms);
+        }
+        for ev in &self.eigenvars {
+            terms.insert(Expr::Free(ev.clone()));
         }
         terms
     }
@@ -565,6 +610,7 @@ impl Sequent {
 }
 
 impl Formula {
+    #[allow(dead_code)]
     pub fn free_vars(&self) -> HashSet<String> {
         let mut vars = HashSet::new();
         self.collect_free_vars(&mut vars);
@@ -616,6 +662,7 @@ impl Formula {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new_free_var(&self, preferred: Vec<&str>) -> String {
         let vars = self.free_vars();
         for p in preferred.iter() {
@@ -636,6 +683,7 @@ impl Formula {
         }
     }
 
+    #[allow(dead_code)]
     pub fn lift(&self, min: usize) -> Formula {
         match self {
             Formula::Bot | Formula::Top => self.clone(),
@@ -919,6 +967,12 @@ impl fmt::Display for Formula {
 
 impl fmt::Display for Sequent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.eigenvars.is_empty() {
+            let mut vars: Vec<&String> = self.eigenvars.iter().collect();
+            vars.sort();
+            let vars: Vec<String> = vars.into_iter().map(|s| s.clone()).collect();
+            write!(f, "{} : ", vars.join(", "))?;
+        }
         let lhs: Vec<String> = self.assumptions.iter().map(|a| a.to_string()).collect();
         write!(f, "{}", lhs.join(", "))?;
         write!(f, " ⇒ ")?;

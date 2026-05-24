@@ -96,6 +96,38 @@ pub type ProofCheckError = Vec<String>;
 pub type ProofCheckResult = std::result::Result<(), ProofCheckError>;
 
 impl Proof {
+    /// Verify that names appearing in `child.eigenvars` were either already in
+    /// scope at `self.claim` (i.e. mentioned in some formula or eigenvar) or
+    /// belong to `allowed` (the fresh eigenvariable introduced by the current
+    /// rule, if any). This is what enforces "no new constants show up in
+    /// eigenvars except through ExistsLeft / ForAllRight, or by moving an
+    /// implicitly named constant into eigenvars".
+    fn check_eigenvars(
+        &self,
+        child: &Proof,
+        allowed: Option<&str>,
+        rule_name: &str,
+    ) -> ProofCheckResult {
+        let self_free = self.claim.free_vars();
+        let bad: Vec<String> = child
+            .claim
+            .eigenvars
+            .iter()
+            .filter(|v| !self_free.contains(*v) && allowed != Some(v.as_str()))
+            .cloned()
+            .collect();
+        if !bad.is_empty() {
+            return Err(vec![
+                format!(
+                    "Sub-proof has eigenvariable(s) {:?} not in scope on {}",
+                    bad, child.claim
+                ),
+                format!("While checking {} on {}", rule_name, self.claim),
+            ]);
+        }
+        Ok(())
+    }
+
     pub fn check(&self) -> ProofCheckResult {
         match &self.proof {
             ProofStep::Axiom => {
@@ -148,6 +180,7 @@ impl Proof {
                         format!("While checking NegLeft on {}", self.claim),
                     ]);
                 }
+                self.check_eigenvars(p, None, "NegLeft")?;
                 p.check().map_err(|mut e| {
                     e.push(format!("While checking NegLeft on {}", self.claim));
                     e
@@ -182,6 +215,7 @@ impl Proof {
                         format!("While checking NegRight on {}", self.claim),
                     ]);
                 }
+                self.check_eigenvars(p, None, "NegRight")?;
                 p.check().map_err(|mut e| {
                     e.push(format!("While checking NegRight on {}", self.claim));
                     e
@@ -226,6 +260,7 @@ impl Proof {
                         format!("While checking AndLeft on {}", self.claim),
                     ]);
                 }
+                self.check_eigenvars(p, None, "AndLeft")?;
                 p.check().map_err(|mut e| {
                     e.push(format!("While checking AndLeft on {}", self.claim));
                     e
@@ -290,6 +325,8 @@ impl Proof {
                         format!("While checking AndRight on {}", self.claim),
                     ]);
                 }
+                self.check_eigenvars(p_left, None, "AndRight")?;
+                self.check_eigenvars(p_right, None, "AndRight")?;
                 p_left.check().map_err(|mut e| {
                     e.push(format!(
                         "While checking left branch of AndRight on {}",
@@ -365,6 +402,8 @@ impl Proof {
                         format!("While checking OrLeft on {}", self.claim),
                     ]);
                 }
+                self.check_eigenvars(p_left, None, "OrLeft")?;
+                self.check_eigenvars(p_right, None, "OrLeft")?;
                 p_left.check().map_err(|mut e| {
                     e.push(format!(
                         "While checking left branch of OrLeft on {}",
@@ -420,6 +459,7 @@ impl Proof {
                         format!("While checking OrRight on {}", self.claim),
                     ]);
                 }
+                self.check_eigenvars(p, None, "OrRight")?;
                 p.check().map_err(|mut e| {
                     e.push(format!("While checking OrRight on {}", self.claim));
                     e
@@ -484,6 +524,8 @@ impl Proof {
                         format!("While checking ImplLeft on {}", self.claim),
                     ]);
                 }
+                self.check_eigenvars(p_left, None, "ImplLeft")?;
+                self.check_eigenvars(p_right, None, "ImplLeft")?;
                 p_left.check().map_err(|mut e| {
                     e.push(format!(
                         "While checking left branch of ImplLeft on {}",
@@ -547,6 +589,7 @@ impl Proof {
                         format!("While checking ImplRight on {}", self.claim),
                     ]);
                 }
+                self.check_eigenvars(p, None, "ImplRight")?;
                 p.check().map_err(|mut e| {
                     e.push(format!("While checking ImplRight on {}", self.claim));
                     e
@@ -567,21 +610,33 @@ impl Proof {
                         format!("While checking ForAllLeft on {}", self.claim),
                     ]);
                 }
-                let ok = self.claim.assumptions.iter().any(|g| {
-                    if let Formula::All(_, body) = g {
-                        diff.iter().all(|f| f.is_instance_of(body, 0).is_some())
-                    } else {
-                        false
+                if let Some(f) = diff.iter().next() {
+                    let witness = self.claim.assumptions.iter().find_map(|g| match g {
+                        Formula::All(_, body) => {
+                            f.is_instance_of(body, 0).map(|s| s.lookup(0).cloned())
+                        }
+                        _ => None,
+                    });
+                    let Some(witness) = witness else {
+                        return Err(vec![
+                            format!(
+                                "No ∀ in previous assumptions matches the sub-proof on {}",
+                                p.claim
+                            ),
+                            format!("While checking ForAllLeft on {}", self.claim),
+                        ]);
+                    };
+                    if let Some(w) = witness {
+                        if !w
+                            .constants_with_arity()
+                            .is_subset(&self.claim.constants_with_arity())
+                        {
+                            return Err(vec![
+                                format!("Witness {} uses constants not in scope on {}", w, p.claim),
+                                format!("While checking ForAllLeft on {}", self.claim),
+                            ]);
+                        }
                     }
-                });
-                if !ok {
-                    return Err(vec![
-                        format!(
-                            "No ∀ in previous assumptions matches the sub-proof on {}",
-                            p.claim
-                        ),
-                        format!("While checking ForAllLeft on {}", self.claim),
-                    ]);
                 }
                 if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
                     return Err(vec![
@@ -589,6 +644,7 @@ impl Proof {
                         format!("While checking ForAllLeft on {}", self.claim),
                     ]);
                 }
+                self.check_eigenvars(p, None, "ForAllLeft")?;
                 p.check().map_err(|mut e| {
                     e.push(format!("While checking ForAllLeft on {}", self.claim));
                     e
@@ -610,28 +666,41 @@ impl Proof {
                     ]);
                 }
                 let self_free = self.claim.free_vars();
-                let ok = self.claim.conclusions.iter().any(|g| {
-                    if let Formula::All(_, body) = g {
-                        diff.iter().all(|f| match f.is_instance_of(body, 0) {
-                            None => false,
-                            Some(sub) if sub.bindings.is_empty() => true,
-                            Some(sub) => match sub.lookup(0) {
-                                Some(Expr::Free(y)) => !self_free.contains(y),
-                                _ => false,
-                            },
-                        })
-                    } else {
-                        false
-                    }
-                });
-                if !ok {
+                let p_free = p.claim.free_vars();
+                let new_vars: Vec<&String> = p_free.difference(&self_free).collect();
+                if new_vars.len() > 1 {
                     return Err(vec![
                         format!(
-                            "No ∀ in previous conclusions matches the sub-proof with a fresh eigenvariable on {}",
+                            "Sub-proof introduces more than one new free variable on {}",
                             p.claim
                         ),
                         format!("While checking ForAllRight on {}", self.claim),
                     ]);
+                }
+                let new_eigenvar: Option<&String> = new_vars.into_iter().next();
+                if let Some(f) = diff.iter().next() {
+                    let ok = self.claim.conclusions.iter().any(|g| {
+                        let Formula::All(_, body) = g else {
+                            return false;
+                        };
+                        match f.is_instance_of(body, 0) {
+                            None => false,
+                            Some(sub) if sub.bindings.is_empty() => true,
+                            Some(sub) => match (sub.lookup(0), new_eigenvar) {
+                                (Some(Expr::Free(y)), Some(intro)) => y == intro,
+                                _ => false,
+                            },
+                        }
+                    });
+                    if !ok {
+                        return Err(vec![
+                            format!(
+                                "No ∀ in previous conclusions matches the sub-proof with a fresh eigenvariable on {}",
+                                p.claim
+                            ),
+                            format!("While checking ForAllRight on {}", self.claim),
+                        ]);
+                    }
                 }
                 if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
                     return Err(vec![
@@ -639,6 +708,7 @@ impl Proof {
                         format!("While checking ForAllRight on {}", self.claim),
                     ]);
                 }
+                self.check_eigenvars(p, new_eigenvar.map(|s| s.as_str()), "ForAllRight")?;
                 p.check().map_err(|mut e| {
                     e.push(format!("While checking ForAllRight on {}", self.claim));
                     e
@@ -660,28 +730,41 @@ impl Proof {
                     ]);
                 }
                 let self_free = self.claim.free_vars();
-                let ok = self.claim.assumptions.iter().any(|g| {
-                    if let Formula::Exists(_, body) = g {
-                        diff.iter().all(|f| match f.is_instance_of(body, 0) {
-                            None => false,
-                            Some(sub) if sub.bindings.is_empty() => true,
-                            Some(sub) => match sub.lookup(0) {
-                                Some(Expr::Free(y)) => !self_free.contains(y),
-                                _ => false,
-                            },
-                        })
-                    } else {
-                        false
-                    }
-                });
-                if !ok {
+                let p_free = p.claim.free_vars();
+                let new_vars: Vec<&String> = p_free.difference(&self_free).collect();
+                if new_vars.len() > 1 {
                     return Err(vec![
                         format!(
-                            "No ∃ in previous assumptions matches the sub-proof with a fresh eigenvariable on {}",
+                            "Sub-proof introduces more than one new free variable on {}",
                             p.claim
                         ),
                         format!("While checking ExistsLeft on {}", self.claim),
                     ]);
+                }
+                let new_eigenvar: Option<&String> = new_vars.into_iter().next();
+                if let Some(f) = diff.iter().next() {
+                    let ok = self.claim.assumptions.iter().any(|g| {
+                        let Formula::Exists(_, body) = g else {
+                            return false;
+                        };
+                        match f.is_instance_of(body, 0) {
+                            None => false,
+                            Some(sub) if sub.bindings.is_empty() => true,
+                            Some(sub) => match (sub.lookup(0), new_eigenvar) {
+                                (Some(Expr::Free(y)), Some(intro)) => y == intro,
+                                _ => false,
+                            },
+                        }
+                    });
+                    if !ok {
+                        return Err(vec![
+                            format!(
+                                "No ∃ in previous assumptions matches the sub-proof with a fresh eigenvariable on {}",
+                                p.claim
+                            ),
+                            format!("While checking ExistsLeft on {}", self.claim),
+                        ]);
+                    }
                 }
                 if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
                     return Err(vec![
@@ -689,6 +772,7 @@ impl Proof {
                         format!("While checking ExistsLeft on {}", self.claim),
                     ]);
                 }
+                self.check_eigenvars(p, new_eigenvar.map(|s| s.as_str()), "ExistsLeft")?;
                 p.check().map_err(|mut e| {
                     e.push(format!("While checking ExistsLeft on {}", self.claim));
                     e
@@ -709,21 +793,33 @@ impl Proof {
                         format!("While checking ExistsRight on {}", self.claim),
                     ]);
                 }
-                let ok = self.claim.conclusions.iter().any(|g| {
-                    if let Formula::Exists(_, body) = g {
-                        diff.iter().all(|f| f.is_instance_of(body, 0).is_some())
-                    } else {
-                        false
+                if let Some(f) = diff.iter().next() {
+                    let witness = self.claim.conclusions.iter().find_map(|g| match g {
+                        Formula::Exists(_, body) => {
+                            f.is_instance_of(body, 0).map(|s| s.lookup(0).cloned())
+                        }
+                        _ => None,
+                    });
+                    let Some(witness) = witness else {
+                        return Err(vec![
+                            format!(
+                                "No ∃ in previous conclusions matches the sub-proof on {}",
+                                p.claim
+                            ),
+                            format!("While checking ExistsRight on {}", self.claim),
+                        ]);
+                    };
+                    if let Some(w) = witness {
+                        if !w
+                            .constants_with_arity()
+                            .is_subset(&self.claim.constants_with_arity())
+                        {
+                            return Err(vec![
+                                format!("Witness {} uses constants not in scope on {}", w, p.claim),
+                                format!("While checking ExistsRight on {}", self.claim),
+                            ]);
+                        }
                     }
-                });
-                if !ok {
-                    return Err(vec![
-                        format!(
-                            "No ∃ in previous conclusions matches the sub-proof on {}",
-                            p.claim
-                        ),
-                        format!("While checking ExistsRight on {}", self.claim),
-                    ]);
                 }
                 if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
                     return Err(vec![
@@ -731,6 +827,7 @@ impl Proof {
                         format!("While checking ExistsRight on {}", self.claim),
                     ]);
                 }
+                self.check_eigenvars(p, None, "ExistsRight")?;
                 p.check().map_err(|mut e| {
                     e.push(format!("While checking ExistsRight on {}", self.claim));
                     e
@@ -755,6 +852,7 @@ impl Proof {
                     claim: Sequent {
                         assumptions: crate::hash_set! {f.clone()},
                         conclusions: crate::hash_set! {f},
+                        eigenvars: HashSet::new(),
                     },
                     proof: ProofStep::Axiom,
                 })
@@ -767,6 +865,7 @@ impl Proof {
                     claim: Sequent {
                         assumptions: crate::hash_set! {Formula::Bot},
                         conclusions: HashSet::new(),
+                        eigenvars: HashSet::new(),
                     },
                     proof: ProofStep::BotLeft,
                 })
@@ -784,6 +883,9 @@ impl Proof {
                     return None;
                 }
                 let p_s = p.strip()?;
+                if !p_s.claim.conclusions.contains(&g) {
+                    return Some(p_s);
+                }
                 let mut assms = p_s.claim.assumptions.clone();
                 assms.insert(g.neg());
                 let mut concs = p_s.claim.conclusions.clone();
@@ -792,6 +894,7 @@ impl Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: concs,
+                        eigenvars: p_s.claim.eigenvars.clone(),
                     },
                     proof: ProofStep::NegLeft(Box::new(p_s)),
                 })
@@ -809,6 +912,9 @@ impl Proof {
                     return None;
                 }
                 let p_s = p.strip()?;
+                if !p_s.claim.assumptions.contains(&g) {
+                    return Some(p_s);
+                }
                 let mut assms = p_s.claim.assumptions.clone();
                 assms.remove(&g);
                 let mut concs = p_s.claim.conclusions.clone();
@@ -817,6 +923,7 @@ impl Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: concs,
+                        eigenvars: p_s.claim.eigenvars.clone(),
                     },
                     proof: ProofStep::NegRight(Box::new(p_s)),
                 })
@@ -846,6 +953,9 @@ impl Proof {
                     _ => unreachable!(),
                 };
                 let p_s = p.strip()?;
+                if !p_s.claim.assumptions.contains(&la) && !p_s.claim.assumptions.contains(&lb) {
+                    return Some(p_s);
+                }
                 let mut assms = p_s.claim.assumptions.clone();
                 assms.remove(&la);
                 assms.remove(&lb);
@@ -854,6 +964,7 @@ impl Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: p_s.claim.conclusions.clone(),
+                        eigenvars: p_s.claim.eigenvars.clone(),
                     },
                     proof: ProofStep::AndLeft(Box::new(p_s)),
                 })
@@ -896,14 +1007,19 @@ impl Proof {
                 };
                 let l_s = p_l.strip()?;
                 let r_s = p_r.strip()?;
+                if !l_s.claim.conclusions.contains(&la) && !r_s.claim.conclusions.contains(&lb) {
+                    return Some(l_s);
+                }
                 let assms = &l_s.claim.assumptions | &r_s.claim.assumptions;
                 let concs = &(&(&l_s.claim.conclusions - &crate::hash_set! {la})
                     | &(&r_s.claim.conclusions - &crate::hash_set! {lb}))
                     | &crate::hash_set! {principal};
+                let eigenvars = &l_s.claim.eigenvars | &r_s.claim.eigenvars;
                 Some(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: concs,
+                        eigenvars,
                     },
                     proof: ProofStep::AndRight(Box::new(l_s), Box::new(r_s)),
                 })
@@ -946,14 +1062,19 @@ impl Proof {
                 };
                 let l_s = p_l.strip()?;
                 let r_s = p_r.strip()?;
+                if !l_s.claim.assumptions.contains(&la) && !r_s.claim.assumptions.contains(&lb) {
+                    return Some(l_s);
+                }
                 let assms = &(&(&l_s.claim.assumptions - &crate::hash_set! {la})
                     | &(&r_s.claim.assumptions - &crate::hash_set! {lb}))
                     | &crate::hash_set! {principal};
                 let concs = &l_s.claim.conclusions | &r_s.claim.conclusions;
+                let eigenvars = &l_s.claim.eigenvars | &r_s.claim.eigenvars;
                 Some(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: concs,
+                        eigenvars,
                     },
                     proof: ProofStep::OrLeft(Box::new(l_s), Box::new(r_s)),
                 })
@@ -983,6 +1104,9 @@ impl Proof {
                     _ => unreachable!(),
                 };
                 let p_s = p.strip()?;
+                if !p_s.claim.conclusions.contains(&la) && !p_s.claim.conclusions.contains(&lb) {
+                    return Some(p_s);
+                }
                 let mut concs = p_s.claim.conclusions.clone();
                 concs.remove(&la);
                 concs.remove(&lb);
@@ -991,6 +1115,7 @@ impl Proof {
                     claim: Sequent {
                         assumptions: p_s.claim.assumptions.clone(),
                         conclusions: concs,
+                        eigenvars: p_s.claim.eigenvars.clone(),
                     },
                     proof: ProofStep::OrRight(Box::new(p_s)),
                 })
@@ -1033,15 +1158,20 @@ impl Proof {
                 };
                 let l_s = p_l.strip()?;
                 let r_s = p_r.strip()?;
+                if !l_s.claim.conclusions.contains(&la) && !r_s.claim.assumptions.contains(&lb) {
+                    return Some(l_s);
+                }
                 let assms = &(&l_s.claim.assumptions
                     | &(&r_s.claim.assumptions - &crate::hash_set! {lb}))
                     | &crate::hash_set! {principal};
                 let concs =
                     &(&l_s.claim.conclusions - &crate::hash_set! {la}) | &r_s.claim.conclusions;
+                let eigenvars = &l_s.claim.eigenvars | &r_s.claim.eigenvars;
                 Some(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: concs,
+                        eigenvars,
                     },
                     proof: ProofStep::ImplLeft(Box::new(l_s), Box::new(r_s)),
                 })
@@ -1077,6 +1207,9 @@ impl Proof {
                     _ => unreachable!(),
                 };
                 let p_s = p.strip()?;
+                if !p_s.claim.assumptions.contains(&la) && !p_s.claim.conclusions.contains(&lb) {
+                    return Some(p_s);
+                }
                 let mut assms = p_s.claim.assumptions.clone();
                 assms.remove(&la);
                 let mut concs = p_s.claim.conclusions.clone();
@@ -1086,6 +1219,7 @@ impl Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: concs,
+                        eigenvars: p_s.claim.eigenvars.clone(),
                     },
                     proof: ProofStep::ImplRight(Box::new(p_s)),
                 })
@@ -1111,6 +1245,21 @@ impl Proof {
                     _ => None,
                 })?;
                 let added = diff.iter().next().map(|f| (*f).clone());
+                let Formula::All(_, body) = &principal else {
+                    return None;
+                };
+                let witness: Option<Expr> = added.as_ref().and_then(|inst| {
+                    inst.is_instance_of(body, 0)
+                        .and_then(|s| s.lookup(0).cloned())
+                });
+                if let Some(w) = &witness {
+                    if !w
+                        .constants_with_arity()
+                        .is_subset(&self.claim.constants_with_arity())
+                    {
+                        return None;
+                    }
+                }
                 let p_s = p.strip()?;
                 // If the instance wasn't actually used by the stripped subproof,
                 // the ∀L application was wasteful — skip it.
@@ -1125,10 +1274,24 @@ impl Proof {
                     assms.remove(x);
                 }
                 assms.insert(principal);
+                let mut eigenvars = p_s.claim.eigenvars.clone();
+                if let Some(w) = &witness {
+                    let mut parent_free: HashSet<String> = HashSet::new();
+                    for f in assms.iter().chain(p_s.claim.conclusions.iter()) {
+                        f.collect_free_vars(&mut parent_free);
+                    }
+                    parent_free.extend(eigenvars.iter().cloned());
+                    for v in w.free_vars() {
+                        if !parent_free.contains(&v) {
+                            eigenvars.insert(v);
+                        }
+                    }
+                }
                 Some(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: p_s.claim.conclusions.clone(),
+                        eigenvars,
                     },
                     proof: ProofStep::ForAllLeft(Box::new(p_s)),
                 })
@@ -1161,16 +1324,27 @@ impl Proof {
                     _ => None,
                 })?;
                 let added = diff.iter().next().map(|f| (*f).clone());
+                let new_eigenvar = p
+                    .claim
+                    .eigenvars
+                    .difference(&self.claim.eigenvars)
+                    .next()
+                    .cloned();
                 let p_s = p.strip()?;
                 let mut concs = p_s.claim.conclusions.clone();
                 if let Some(x) = &added {
                     concs.remove(x);
                 }
                 concs.insert(principal);
+                let mut eigenvars = p_s.claim.eigenvars.clone();
+                if let Some(ev) = &new_eigenvar {
+                    eigenvars.remove(ev);
+                }
                 Some(Proof {
                     claim: Sequent {
                         assumptions: p_s.claim.assumptions.clone(),
                         conclusions: concs,
+                        eigenvars,
                     },
                     proof: ProofStep::ForAllRight(Box::new(p_s)),
                 })
@@ -1203,16 +1377,27 @@ impl Proof {
                     _ => None,
                 })?;
                 let added = diff.iter().next().map(|f| (*f).clone());
+                let new_eigenvar = p
+                    .claim
+                    .eigenvars
+                    .difference(&self.claim.eigenvars)
+                    .next()
+                    .cloned();
                 let p_s = p.strip()?;
                 let mut assms = p_s.claim.assumptions.clone();
                 if let Some(x) = &added {
                     assms.remove(x);
                 }
                 assms.insert(principal);
+                let mut eigenvars = p_s.claim.eigenvars.clone();
+                if let Some(ev) = &new_eigenvar {
+                    eigenvars.remove(ev);
+                }
                 Some(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: p_s.claim.conclusions.clone(),
+                        eigenvars,
                     },
                     proof: ProofStep::ExistsLeft(Box::new(p_s)),
                 })
@@ -1238,6 +1423,21 @@ impl Proof {
                     _ => None,
                 })?;
                 let added = diff.iter().next().map(|f| (*f).clone());
+                let Formula::Exists(_, body) = &principal else {
+                    return None;
+                };
+                let witness: Option<Expr> = added.as_ref().and_then(|inst| {
+                    inst.is_instance_of(body, 0)
+                        .and_then(|s| s.lookup(0).cloned())
+                });
+                if let Some(w) = &witness {
+                    if !w
+                        .constants_with_arity()
+                        .is_subset(&self.claim.constants_with_arity())
+                    {
+                        return None;
+                    }
+                }
                 let p_s = p.strip()?;
                 // If the instance wasn't actually used by the stripped subproof,
                 // the ∃R application was wasteful — skip it.
@@ -1252,13 +1452,152 @@ impl Proof {
                     concs.remove(x);
                 }
                 concs.insert(principal);
+                let mut eigenvars = p_s.claim.eigenvars.clone();
+                if let Some(w) = &witness {
+                    let mut parent_free: HashSet<String> = HashSet::new();
+                    for f in p_s.claim.assumptions.iter().chain(concs.iter()) {
+                        f.collect_free_vars(&mut parent_free);
+                    }
+                    parent_free.extend(eigenvars.iter().cloned());
+                    for v in w.free_vars() {
+                        if !parent_free.contains(&v) {
+                            eigenvars.insert(v);
+                        }
+                    }
+                }
                 Some(Proof {
                     claim: Sequent {
                         assumptions: p_s.claim.assumptions.clone(),
                         conclusions: concs,
+                        eigenvars,
                     },
                     proof: ProofStep::ExistsRight(Box::new(p_s)),
                 })
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::Parser;
+
+    fn parse_initial(input: &str) -> Sequent {
+        if let Ok(s) = Parser::new(input.to_string()).and_then(|mut p| p.parse_sequent()) {
+            return s;
+        }
+        let mut parser = Parser::new(input.to_string()).expect("parser init");
+        let formula = parser.parse_formula().expect("parse_formula");
+        let mut conclusions = HashSet::new();
+        conclusions.insert(formula);
+        Sequent {
+            assumptions: HashSet::new(),
+            conclusions,
+            eigenvars: HashSet::new(),
+        }
+    }
+
+    fn try_prove(input: &str) -> Option<Proof> {
+        let sequent = parse_initial(input);
+        let depth = (2 * sequent.size()).max(12);
+        sequent.proof_search(depth)
+    }
+
+    fn parse_proof_str(input: &str) -> Result<Proof, Vec<String>> {
+        Parser::new(input.to_string())?.parse_proof()
+    }
+
+    #[test]
+    fn provable_round_trip() {
+        let formulas = [
+            "P -> P",
+            "P, Q => P",
+            "P & Q -> Q & P",
+            "P | Q -> Q | P",
+            "P -> ~~P",
+            "~~P -> P",
+            "P | ~P",
+            "(P -> Q) -> (~Q -> ~P)",
+            "P -> Q, Q -> R => P -> R",
+            "P | Q, P -> R, Q -> R => R",
+            "P(c) -> exists x. P(x)",
+            "forall x. P(x) -> P(c)",
+            "P(c), forall x. Q(x) => exists y. Q(y)",
+            "exists y. forall x. p(x,y) -> forall x. exists y. p(x,y)",
+            "forall x. p(x) & ~p(x) => forall x. 0",
+            "~(forall x. p(x) -> exists x. p(x)) -> ~exists x. 1",
+        ];
+        for s in &formulas {
+            let proof = try_prove(s).unwrap_or_else(|| panic!("no proof for: {}", s));
+            proof
+                .check()
+                .unwrap_or_else(|e| panic!("raw proof failed check for {}: {:?}", s, e));
+            let stripped = proof
+                .strip()
+                .unwrap_or_else(|| panic!("strip returned None for: {}", s));
+            stripped
+                .check()
+                .unwrap_or_else(|e| panic!("stripped proof failed check for {}: {:?}", s, e));
+        }
+    }
+
+    #[test]
+    fn unprovable_formulas() {
+        let formulas = [
+            "=> P",
+            "P => Q",
+            "(P -> Q) -> (Q -> P)",
+            "exists x. P(x) => forall x. P(x)",
+            "(forall x. P(x) | Q(x)) -> (forall x. P(x)) | (forall x. Q(x))",
+            "forall y. exists x. R(x, y) => exists x. forall y. R(x, y)",
+        ];
+        for s in &formulas {
+            assert!(
+                try_prove(s).is_none(),
+                "unexpectedly found a proof for: {}",
+                s
+            );
+        }
+    }
+
+    /// Run `check` and `strip` against every file under `proofs/valid/` and
+    /// `proofs/bad/`. For each file `check` and `strip` must agree;
+    /// `valid` files must additionally pass re-check after stripping.
+    #[test]
+    fn proofs_directory() {
+        for (subdir, expect_valid) in [("valid", true), ("bad", false)] {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("proofs")
+                .join(subdir);
+            let mut entries: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap_or_else(|e| panic!("read {}: {}", dir.display(), e))
+                .map(|e| e.expect("dir entry").path())
+                .collect();
+            entries.sort();
+            assert!(!entries.is_empty(), "proofs/{}/ is empty", subdir);
+            for path in entries {
+                let name = format!("{}/{}", subdir, path.file_name().unwrap().to_string_lossy());
+                let contents = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("read {}: {}", name, e));
+                let proof = parse_proof_str(&contents)
+                    .unwrap_or_else(|e| panic!("parse failed for {}: {:?}", name, e));
+                let check_ok = proof.check().is_ok();
+                let strip_ok = proof.strip().is_some();
+                assert_eq!(
+                    check_ok, strip_ok,
+                    "check ({}) and strip ({}) disagree on {}",
+                    check_ok, strip_ok, name
+                );
+                if expect_valid {
+                    assert!(check_ok, "expected {} to check successfully", name);
+                    let stripped = proof.strip().expect("strip");
+                    stripped
+                        .check()
+                        .unwrap_or_else(|e| panic!("stripped {} failed re-check: {:?}", name, e));
+                } else {
+                    assert!(!check_ok, "expected {} to fail check", name);
+                }
             }
         }
     }

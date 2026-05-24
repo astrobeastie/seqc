@@ -13,6 +13,7 @@ pub enum Token {
     Top,
     Dot,
     Comma,
+    Colon,
 
     LeftBrace,
     RightBrace,
@@ -54,6 +55,10 @@ impl Lexer {
 
     fn remaining(&self) -> &str {
         &self.input[self.position..]
+    }
+
+    pub fn set_position(&mut self, pos: usize) {
+        self.position = pos;
     }
 
     fn skip_ws(&mut self) {
@@ -127,6 +132,7 @@ impl Lexer {
             ("|", Token::Or),
             (".", Token::Dot),
             (",", Token::Comma),
+            (":", Token::Colon),
             ("{", Token::LeftBrace),
             ("}", Token::RightBrace),
             ("0", Token::Bot),

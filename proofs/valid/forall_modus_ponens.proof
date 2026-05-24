@@ -1,0 +1,6 @@
+P(c), forall x. (P(x) -> Q(x)) => Q(c) by forallL {
+  P(c), forall x. (P(x) -> Q(x)), P(c) -> Q(c) => Q(c) by impL {
+    P(c), forall x. (P(x) -> Q(x)) => Q(c), P(c) by axiom,
+    P(c), forall x. (P(x) -> Q(x)), Q(c) => Q(c) by axiom
+  }
+}

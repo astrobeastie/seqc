@@ -56,6 +56,7 @@ impl Substitution {
     /// applying `self`, then applying `other`. For each `v -> t` in `self`,
     /// the resulting binding is `v -> t.subst(other)`. Bindings from `other`
     /// for variables not in `self` are appended.
+    #[allow(dead_code)]
     pub fn then(&self, other: &Substitution) -> Substitution {
         let mut bindings: HashMap<usize, Expr> = self
             .bindings

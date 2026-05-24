@@ -1,0 +1,3 @@
+Q => exists x. P(x) by existsR {
+  Q, P(c) => exists x. P(x), P(c) by axiom
+}

@@ -1,0 +1,3 @@
+P(a), Q => Q by forallL {
+  P(a), R(b), Q => Q by axiom
+}

@@ -1,0 +1,8 @@
+=> ((P -> Q) -> P) -> P by impR {
+  (P -> Q) -> P => P by impL {
+    => P -> Q, P by impR {
+      P => Q, P by axiom
+    },
+    P, (P -> Q) -> P => P by axiom
+  }
+}

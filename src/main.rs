@@ -109,6 +109,7 @@ fn prove(args: &[String]) {
             Sequent {
                 assumptions: HashSet::new(),
                 conclusions,
+                eigenvars: HashSet::new(),
             }
         }
     };

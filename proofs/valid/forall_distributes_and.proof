@@ -1,0 +1,16 @@
+forall x. (P(x) & Q(x)) => (forall x. P(x)) & (forall x. Q(x)) by andR {
+  forall x. (P(x) & Q(x)) => forall x. P(x) by forallR {
+    forall x. (P(x) & Q(x)) => P(y) by forallL {
+      forall x. (P(x) & Q(x)), P(y) & Q(y) => P(y) by andL {
+        forall x. (P(x) & Q(x)), P(y), Q(y) => P(y) by axiom
+      }
+    }
+  },
+  forall x. (P(x) & Q(x)) => forall x. Q(x) by forallR {
+    forall x. (P(x) & Q(x)) => Q(y) by forallL {
+      forall x. (P(x) & Q(x)), P(y) & Q(y) => Q(y) by andL {
+        forall x. (P(x) & Q(x)), P(y), Q(y) => Q(y) by axiom
+      }
+    }
+  }
+}

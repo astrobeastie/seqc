@@ -257,6 +257,32 @@ impl Parser {
     }
 
     pub fn parse_sequent(&mut self) -> ParseResult<Sequent> {
+        // Optional eigenvars prefix: IDENT (',' IDENT)* ':'
+        // Snapshot the position of the current token so we can rewind if there is no colon.
+        let snap = self.current_pos;
+        let mut eigenvars: HashSet<String> = HashSet::new();
+        if matches!(self.current_token, Token::Identifier(_)) {
+            let mut names: Vec<String> = Vec::new();
+            loop {
+                let Token::Identifier(name) = &self.current_token else {
+                    break;
+                };
+                names.push(name.clone());
+                self.advance()?;
+                if self.current_token == Token::Comma {
+                    self.advance()?;
+                } else {
+                    break;
+                }
+            }
+            if self.current_token == Token::Colon && !names.is_empty() {
+                self.advance()?;
+                eigenvars = names.into_iter().collect();
+            } else {
+                self.lexer.set_position(snap);
+                self.advance()?;
+            }
+        }
         let mut assumptions = HashSet::new();
         while !matches!(self.current_token, Token::SequentArrow | Token::EOF) {
             let f_pos = self.current_pos;
@@ -290,6 +316,7 @@ impl Parser {
         Ok(Sequent {
             assumptions,
             conclusions,
+            eigenvars,
         })
     }
 

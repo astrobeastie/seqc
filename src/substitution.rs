@@ -89,17 +89,26 @@ impl Subst for Expr {
     }
 }
 
-fn new_free_var(vars: HashSet<String>, preferred: Vec<&str>) -> String {
-    for p in preferred.iter() {
+/// Pick a name not contained in `vars`: the first free `preferred` name, or
+/// else `{p}_{i}` for the smallest `i` that is free.
+pub fn new_free_var(vars: &HashSet<String>, preferred: &[&str]) -> String {
+    let preferred: &[&str] = if preferred.is_empty() {
+        &["x"]
+    } else {
+        preferred
+    };
+    for p in preferred {
         if !vars.contains(*p) {
             return p.to_string();
         }
     }
-    let mut i = 0;
+    let mut i = 1;
     loop {
-        let candidate = format!("x{}", i);
-        if !vars.contains(&candidate) {
-            return candidate;
+        for p in preferred {
+            let candidate = format!("{}_{}", p, i);
+            if !vars.contains(&candidate) {
+                return candidate;
+            }
         }
         i += 1;
     }
@@ -108,7 +117,7 @@ fn new_free_var(vars: HashSet<String>, preferred: Vec<&str>) -> String {
 impl Subst for Formula {
     fn subst(&self, sigma: &Substitution) -> Formula {
         match self {
-            Formula::Bot | Formula::Top => self.clone(),
+            Formula::Bot => self.clone(),
             Formula::Pred(name, args) => {
                 Formula::Pred(name.clone(), args.iter().map(|a| a.subst(sigma)).collect())
             }
@@ -125,7 +134,7 @@ impl Subst for Formula {
                         .into_iter()
                         .chain(sigma.bindings.values().flat_map(|t| t.free_vars()))
                         .collect();
-                    let fresh = new_free_var(all_vars, vec![y]);
+                    let fresh = new_free_var(&all_vars, &[y.as_str()]);
                     Formula::All(fresh, Box::new(body.subst(&sigma.lift())))
                 } else {
                     Formula::All(y.clone(), Box::new(body.subst(&sigma.lift())))
@@ -138,7 +147,7 @@ impl Subst for Formula {
                         .into_iter()
                         .chain(sigma.bindings.values().flat_map(|t| t.free_vars()))
                         .collect();
-                    let fresh = new_free_var(all_vars, vec![y]);
+                    let fresh = new_free_var(&all_vars, &[y.as_str()]);
                     Formula::Exists(fresh, Box::new(body.subst(&sigma.lift())))
                 } else {
                     Formula::Exists(y.clone(), Box::new(body.subst(&sigma.lift())))

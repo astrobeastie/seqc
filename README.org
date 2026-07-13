@@ -38,7 +38,7 @@ Identifiers are alphanumerics + ~_~ + ~'~, starting with a letter or
 
 #+begin_example
 t  ::=  x                       -- variable
-     |  f(t1, ..., tn)          -- function application (n ≥ 1)
+     |  f(t1, ..., tn)          -- function application (n ≥ 0)
 #+end_example
 
 A bare identifier is read as a variable; an identifier immediately
@@ -72,6 +72,9 @@ form may be used (and mixed) freely:
 
 Precedence, tightest first: atoms / quantifiers / negation, ~∧~, ~∨~,
 ~→~.  ~∧~ and ~∨~ are left-associative; ~→~ is right-associative.
+
+~⊤~ (~1~) is parsed as sugar for ~¬⊥~ — the calculus has no ⊤ rules of
+its own, and it prints back as ~¬⊥~.
 
 ** Sequents and proof trees
 

@@ -56,7 +56,7 @@ fn usage(prog: &str) {
     eprintln!("  {} typst  <proof-file>", prog);
 }
 
-fn load_proof(prog: &str, cmd: &str, path: &str) -> Proof {
+fn load_proof(path: &str) -> Proof {
     let contents = match fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
@@ -75,7 +75,6 @@ fn load_proof(prog: &str, cmd: &str, path: &str) -> Proof {
         Ok(p) => p,
         Err(trace) => {
             print_trace("parse error", &trace);
-            let _ = (prog, cmd);
             process::exit(1);
         }
     }
@@ -91,7 +90,7 @@ fn export_subcommand(args: &[String], format: Format) {
         eprintln!("usage: {} {} <proof-file>", args[0], cmd);
         process::exit(2);
     }
-    let proof = load_proof(&args[0], cmd, &args[2]);
+    let proof = load_proof(&args[2]);
     println!("{}", render(&proof, format));
 }
 
@@ -108,7 +107,7 @@ fn verify(args: &[String]) {
         eprintln!("usage: {} verify <proof-file>", args[0]);
         process::exit(2);
     }
-    let proof = load_proof(&args[0], "verify", &args[2]);
+    let proof = load_proof(&args[2]);
     match proof.check() {
         Ok(()) => {
             println!("proof checks out");
@@ -179,6 +178,8 @@ fn prove(args: &[String]) {
             }
         }
     };
+    // Depth bounds only ∀L/∃R witness instantiations per proof path (all other
+    // rules are applied eagerly by the search); 2×size is a generous budget.
     let max_depth = 2 * sequent.size();
     // Binary search [1, max_depth] for the smallest depth that admits a proof.
     let mut best: Option<Proof> = None;
@@ -204,7 +205,10 @@ fn prove(args: &[String]) {
             println!("{}", render(&stripped, format));
         }
         None => {
-            eprintln!("no proof found within depth {}", max_depth);
+            eprintln!(
+                "no proof found within quantifier-instantiation depth {}",
+                max_depth
+            );
             process::exit(1);
         }
     }

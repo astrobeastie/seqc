@@ -9,7 +9,6 @@ use crate::substitution::{Subst, Substitution};
 #[derive(Debug, Clone)]
 pub enum Formula {
     Bot,
-    Top,
     Pred(String, Vec<Expr>),
     Not(Box<Formula>),
     And(Box<Formula>, Box<Formula>),
@@ -23,7 +22,7 @@ pub enum Formula {
 impl PartialEq for Formula {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Formula::Bot, Formula::Bot) | (Formula::Top, Formula::Top) => true,
+            (Formula::Bot, Formula::Bot) => true,
             (Formula::Pred(x, args1), Formula::Pred(y, args2)) => x == y && args1 == args2,
             (Formula::Not(g1), Formula::Not(g2)) => g1 == g2,
             (Formula::And(a1, b1), Formula::And(a2, b2))
@@ -46,9 +45,6 @@ impl Hash for Formula {
         match self {
             Formula::Bot => {
                 state.write_u8(0);
-            }
-            Formula::Top => {
-                state.write_u8(1);
             }
             Formula::Pred(name, args) => {
                 state.write_u8(2);
@@ -126,6 +122,23 @@ impl Hash for Sequent {
     }
 }
 
+/// Clone `set` and insert the elements of `add`.
+fn set_with<T: Eq + Hash + Clone>(
+    set: &HashSet<T>,
+    add: impl IntoIterator<Item = T>,
+) -> HashSet<T> {
+    let mut s = set.clone();
+    s.extend(add);
+    s
+}
+
+/// Clone `set` without the element `remove`.
+fn set_without<T: Eq + Hash + Clone>(set: &HashSet<T>, remove: &T) -> HashSet<T> {
+    let mut s = set.clone();
+    s.remove(remove);
+    s
+}
+
 impl Sequent {
     pub fn free_vars(&self) -> HashSet<String> {
         let mut vars = HashSet::new();
@@ -145,6 +158,11 @@ impl Sequent {
         self.proof_search_memo(max_depth, &mut memo)
     }
 
+    /// Depth-bounded proof search. `max_depth` bounds only the number of
+    /// ∀L / ∃R witness instantiations along a proof path; every other rule is
+    /// invertible and is applied eagerly without consuming depth (each such
+    /// application replaces a formula by strictly smaller ones, so the eager
+    /// phase terminates on its own).
     fn proof_search_memo(
         &self,
         max_depth: usize,
@@ -158,6 +176,21 @@ impl Sequent {
                 return None;
             }
         }
+        let result = self.proof_search_step(max_depth, memo);
+        if result.is_none() {
+            // Record "failed with budget max_depth" (keep the largest budget).
+            memo.entry(self.clone())
+                .and_modify(|d| *d = (*d).max(max_depth))
+                .or_insert(max_depth);
+        }
+        result
+    }
+
+    fn proof_search_step(
+        &self,
+        max_depth: usize,
+        memo: &mut HashMap<Sequent, usize>,
+    ) -> Option<Proof> {
         if self.assumptions.contains(&Formula::Bot) {
             return Some(Proof {
                 claim: self.clone(),
@@ -167,323 +200,282 @@ impl Sequent {
         if self
             .assumptions
             .iter()
-            .any(|f| self.conclusions.contains(&f))
+            .any(|f| self.conclusions.contains(f))
         {
             return Some(Proof {
                 claim: self.clone(),
                 proof: ProofStep::Axiom,
             });
         }
+
+        let unary = |child: Option<Proof>, mk: fn(Box<Proof>) -> ProofStep| {
+            child.map(|p| Proof {
+                claim: self.clone(),
+                proof: mk(Box::new(p)),
+            })
+        };
+
+        // Eager phase: commit to the first applicable invertible rule — if the
+        // child fails, the sequent is unprovable at this budget, so `return`
+        // unconditionally. Non-branching rules first, then the deterministic
+        // quantifier rules, then branching rules.
         for f in self.assumptions.iter() {
-            if let Formula::Not(g) = f {
-                let mut new_assms = self.assumptions.clone();
-                new_assms.remove(f);
-                let mut new_concs = self.conclusions.clone();
-                new_concs.insert(g.as_ref().clone());
-
-                let new_sequent = Sequent {
-                    assumptions: new_assms,
-                    conclusions: new_concs,
-                    eigenvars: self.eigenvars.clone(),
-                };
-                if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
-                    return Some(Proof {
-                        claim: self.clone(),
-                        proof: ProofStep::NegLeft(Box::new(proof)),
-                    });
+            match f {
+                Formula::Not(g) => {
+                    let child = Sequent {
+                        assumptions: set_without(&self.assumptions, f),
+                        conclusions: set_with(&self.conclusions, [g.as_ref().clone()]),
+                        eigenvars: self.eigenvars.clone(),
+                    };
+                    return unary(child.proof_search_memo(max_depth, memo), ProofStep::NegLeft);
                 }
-            }
-            if let Formula::And(a, b) = f {
-                let mut new_assms = self.assumptions.clone();
-                new_assms.remove(f);
-                new_assms.insert(a.as_ref().clone());
-                new_assms.insert(b.as_ref().clone());
-                let new_sequent = Sequent {
-                    assumptions: new_assms,
-                    conclusions: self.conclusions.clone(),
-                    eigenvars: self.eigenvars.clone(),
-                };
-                if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
-                    return Some(Proof {
-                        claim: self.clone(),
-                        proof: ProofStep::AndLeft(Box::new(proof)),
-                    });
-                }
-            }
-
-            if let Formula::Or(a, b) = f {
-                let mut new_assms_a = self.assumptions.clone();
-                new_assms_a.remove(f);
-                new_assms_a.insert(a.as_ref().clone());
-                let seqa = Sequent {
-                    assumptions: new_assms_a,
-                    conclusions: self.conclusions.clone(),
-                    eigenvars: self.eigenvars.clone(),
-                };
-                let mut new_assms_b = self.assumptions.clone();
-                new_assms_b.remove(f);
-                new_assms_b.insert(b.as_ref().clone());
-                let seqb = Sequent {
-                    assumptions: new_assms_b,
-                    conclusions: self.conclusions.clone(),
-                    eigenvars: self.eigenvars.clone(),
-                };
-                if let (Some(proofa), Some(proofb)) = (
-                    seqa.proof_search_memo(max_depth - 1, memo),
-                    seqb.proof_search_memo(max_depth - 1, memo),
-                ) {
-                    return Some(Proof {
-                        claim: self.clone(),
-                        proof: ProofStep::OrLeft(Box::new(proofa), Box::new(proofb)),
-                    });
-                }
-            }
-
-            if let Formula::Implication(a, b) = f {
-                let mut new_assms_1 = self.assumptions.clone();
-                new_assms_1.remove(f);
-                let mut new_concs_1 = self.conclusions.clone();
-                new_concs_1.insert(a.as_ref().clone());
-                let seq1 = Sequent {
-                    assumptions: new_assms_1,
-                    conclusions: new_concs_1,
-                    eigenvars: self.eigenvars.clone(),
-                };
-                let mut new_assms_2 = self.assumptions.clone();
-                new_assms_2.remove(f);
-                new_assms_2.insert(b.as_ref().clone());
-                let seq2 = Sequent {
-                    assumptions: new_assms_2,
-                    conclusions: self.conclusions.clone(),
-                    eigenvars: self.eigenvars.clone(),
-                };
-                if let (Some(proof1), Some(proof2)) = (
-                    seq1.proof_search_memo(max_depth - 1, memo),
-                    seq2.proof_search_memo(max_depth - 1, memo),
-                ) {
-                    return Some(Proof {
-                        claim: self.clone(),
-                        proof: ProofStep::ImplLeft(Box::new(proof1), Box::new(proof2)),
-                    });
-                }
-            }
-
-            if let Formula::Exists(x, body) = f {
-                let mut new_assms = self.assumptions.clone();
-                new_assms.remove(f);
-                let free_var = self.new_free_var(vec![x]);
-                new_assms.insert(body.instantiate(&Expr::Free(free_var.clone())));
-                let mut new_eigenvars = self.eigenvars.clone();
-                new_eigenvars.insert(free_var);
-                let new_sequent = Sequent {
-                    assumptions: new_assms,
-                    conclusions: self.conclusions.clone(),
-                    eigenvars: new_eigenvars,
-                };
-                if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
-                    return Some(Proof {
-                        claim: self.clone(),
-                        proof: ProofStep::ExistsLeft(Box::new(proof)),
-                    });
-                }
-            }
-
-            // Forall Left and exists Right should be checked at the end
-        }
-
-        for f in self.conclusions.iter() {
-            if let Formula::Not(g) = f {
-                let mut new_assms = self.assumptions.clone();
-                new_assms.insert(g.as_ref().clone());
-                let mut new_concs = self.conclusions.clone();
-                new_concs.remove(f);
-
-                let new_sequent = Sequent {
-                    assumptions: new_assms,
-                    conclusions: new_concs,
-                    eigenvars: self.eigenvars.clone(),
-                };
-                if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
-                    return Some(Proof {
-                        claim: self.clone(),
-                        proof: ProofStep::NegRight(Box::new(proof)),
-                    });
-                }
-            }
-
-            if let Formula::And(a, b) = f {
-                let mut new_concs_a = self.conclusions.clone();
-                new_concs_a.remove(f);
-                new_concs_a.insert(a.as_ref().clone());
-                let seqa = Sequent {
-                    assumptions: self.assumptions.clone(),
-                    conclusions: new_concs_a,
-                    eigenvars: self.eigenvars.clone(),
-                };
-                let mut new_concs_b = self.conclusions.clone();
-                new_concs_b.remove(f);
-                new_concs_b.insert(b.as_ref().clone());
-                let seqb = Sequent {
-                    assumptions: self.assumptions.clone(),
-                    conclusions: new_concs_b,
-                    eigenvars: self.eigenvars.clone(),
-                };
-                if let (Some(proofa), Some(proofb)) = (
-                    seqa.proof_search_memo(max_depth - 1, memo),
-                    seqb.proof_search_memo(max_depth - 1, memo),
-                ) {
-                    return Some(Proof {
-                        claim: self.clone(),
-                        proof: ProofStep::AndRight(Box::new(proofa), Box::new(proofb)),
-                    });
-                }
-            }
-            if let Formula::Or(a, b) = f {
-                let mut new_concs = self.conclusions.clone();
-                new_concs.remove(f);
-                new_concs.insert(a.as_ref().clone());
-                new_concs.insert(b.as_ref().clone());
-                let new_sequent = Sequent {
-                    assumptions: self.assumptions.clone(),
-                    conclusions: new_concs,
-                    eigenvars: self.eigenvars.clone(),
-                };
-                if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
-                    return Some(Proof {
-                        claim: self.clone(),
-                        proof: ProofStep::OrRight(Box::new(proof)),
-                    });
-                }
-            }
-
-            if let Formula::Implication(a, b) = f {
-                let mut new_assms = self.assumptions.clone();
-                new_assms.insert(a.as_ref().clone());
-                let mut new_concs = self.conclusions.clone();
-                new_concs.remove(f);
-                new_concs.insert(b.as_ref().clone());
-                let new_sequent = Sequent {
-                    assumptions: new_assms,
-                    conclusions: new_concs,
-                    eigenvars: self.eigenvars.clone(),
-                };
-                if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
-                    return Some(Proof {
-                        claim: self.clone(),
-                        proof: ProofStep::ImplRight(Box::new(proof)),
-                    });
-                }
-            }
-
-            if let Formula::All(x, body) = f {
-                let mut new_concs = self.conclusions.clone();
-                new_concs.remove(f);
-                let free_var = self.new_free_var(vec![x]);
-                new_concs.insert(body.instantiate(&Expr::Free(free_var.clone())));
-                let mut new_eigenvars = self.eigenvars.clone();
-                new_eigenvars.insert(free_var);
-                let new_sequent = Sequent {
-                    assumptions: self.assumptions.clone(),
-                    conclusions: new_concs,
-                    eigenvars: new_eigenvars,
-                };
-                if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
-                    return Some(Proof {
-                        claim: self.clone(),
-                        proof: ProofStep::ForAllRight(Box::new(proof)),
-                    });
-                }
-            }
-            // Exists Right should be checked at the end
-        }
-        // check easy cases of AllLeft and ExistsRight first. ie. if the other side already contains an instance
-        for f in self.assumptions.iter() {
-            if let Formula::All(_, body) = f {
-                // Very easy case: body has no Bound(0), so the instance is
-                // independent of the witness — only one instantiation exists.
-                if !body.mentions_bound(0) {
-                    let mut new_assms = self.assumptions.clone();
-                    new_assms.remove(f);
-                    new_assms.insert(body.lower(0));
-                    let new_sequent = Sequent {
-                        assumptions: new_assms,
+                Formula::And(a, b) => {
+                    let child = Sequent {
+                        assumptions: set_with(
+                            &set_without(&self.assumptions, f),
+                            [a.as_ref().clone(), b.as_ref().clone()],
+                        ),
                         conclusions: self.conclusions.clone(),
                         eigenvars: self.eigenvars.clone(),
                     };
-                    if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
-                        return Some(Proof {
-                            claim: self.clone(),
-                            proof: ProofStep::ForAllLeft(Box::new(proof)),
-                        });
-                    }
+                    return unary(child.proof_search_memo(max_depth, memo), ProofStep::AndLeft);
                 }
-                for instance in self.conclusions.iter() {
-                    if let Some(s) = instance.is_instance_of(body, 0) {
-                        let mut new_assms = self.assumptions.clone();
-                        new_assms.remove(f);
-                        new_assms.insert(body.instantiate(&s.lookup(0).unwrap()));
-                        let new_sequent = Sequent {
-                            assumptions: new_assms,
-                            conclusions: self.conclusions.clone(),
-                            eigenvars: self.eigenvars.clone(),
-                        };
-                        return Some(Proof {
-                            claim: self.clone(),
-                            proof: ProofStep::ForAllLeft(Box::new(Proof {
-                                claim: new_sequent.clone(),
-                                proof: ProofStep::Axiom,
-                            })),
-                        });
-                    }
-                }
+                _ => {}
             }
         }
-
         for f in self.conclusions.iter() {
-            if let Formula::Exists(_, body) = f {
-                // Very easy case: body has no Bound(0), so the instance is
-                // independent of the witness — only one instantiation exists.
-                if !body.mentions_bound(0) {
-                    let mut new_concs = self.conclusions.clone();
-                    new_concs.remove(f);
-                    new_concs.insert(body.lower(0));
-                    let new_sequent = Sequent {
-                        assumptions: self.assumptions.clone(),
-                        conclusions: new_concs,
+            match f {
+                Formula::Not(g) => {
+                    let child = Sequent {
+                        assumptions: set_with(&self.assumptions, [g.as_ref().clone()]),
+                        conclusions: set_without(&self.conclusions, f),
                         eigenvars: self.eigenvars.clone(),
                     };
-                    if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
-                        return Some(Proof {
-                            claim: self.clone(),
-                            proof: ProofStep::ExistsRight(Box::new(proof)),
-                        });
-                    }
+                    return unary(child.proof_search_memo(max_depth, memo), ProofStep::NegRight);
                 }
-                for instance in self.assumptions.iter() {
-                    if let Some(s) = instance.is_instance_of(body, 0) {
-                        let mut new_concs = self.conclusions.clone();
-                        new_concs.remove(f);
-                        new_concs.insert(body.instantiate(&s.lookup(0).unwrap()));
-                        let new_sequent = Sequent {
-                            assumptions: self.assumptions.clone(),
-                            conclusions: new_concs,
-                            eigenvars: self.eigenvars.clone(),
-                        };
-                        return Some(Proof {
-                            claim: self.clone(),
-                            proof: ProofStep::ExistsRight(Box::new(Proof {
-                                claim: new_sequent.clone(),
-                                proof: ProofStep::Axiom,
-                            })),
-                        });
-                    }
+                Formula::Or(a, b) => {
+                    let child = Sequent {
+                        assumptions: self.assumptions.clone(),
+                        conclusions: set_with(
+                            &set_without(&self.conclusions, f),
+                            [a.as_ref().clone(), b.as_ref().clone()],
+                        ),
+                        eigenvars: self.eigenvars.clone(),
+                    };
+                    return unary(child.proof_search_memo(max_depth, memo), ProofStep::OrRight);
+                }
+                Formula::Implication(a, b) => {
+                    let child = Sequent {
+                        assumptions: set_with(&self.assumptions, [a.as_ref().clone()]),
+                        conclusions: set_with(
+                            &set_without(&self.conclusions, f),
+                            [b.as_ref().clone()],
+                        ),
+                        eigenvars: self.eigenvars.clone(),
+                    };
+                    return unary(child.proof_search_memo(max_depth, memo), ProofStep::ImplRight);
+                }
+                _ => {}
+            }
+        }
+
+        // Deterministic quantifier rules: fresh-eigenvariable rules (∃L, ∀R),
+        // plus the vacuous ∀L / ∃R cases (body without Bound(0)), where only
+        // one instantiation exists.
+        for f in self.assumptions.iter() {
+            match f {
+                Formula::Exists(x, body) => {
+                    let fresh = self.new_free_var(&[x.as_str()]);
+                    let child = Sequent {
+                        assumptions: set_with(
+                            &set_without(&self.assumptions, f),
+                            [body.instantiate(&Expr::Free(fresh.clone()))],
+                        ),
+                        conclusions: self.conclusions.clone(),
+                        eigenvars: set_with(&self.eigenvars, [fresh]),
+                    };
+                    return unary(
+                        child.proof_search_memo(max_depth, memo),
+                        ProofStep::ExistsLeft,
+                    );
+                }
+                Formula::All(_, body) if !body.mentions_bound(0) => {
+                    let child = Sequent {
+                        assumptions: set_with(&set_without(&self.assumptions, f), [body.lower(0)]),
+                        conclusions: self.conclusions.clone(),
+                        eigenvars: self.eigenvars.clone(),
+                    };
+                    return unary(
+                        child.proof_search_memo(max_depth, memo),
+                        ProofStep::ForAllLeft,
+                    );
+                }
+                _ => {}
+            }
+        }
+        for f in self.conclusions.iter() {
+            match f {
+                Formula::All(x, body) => {
+                    let fresh = self.new_free_var(&[x.as_str()]);
+                    let child = Sequent {
+                        assumptions: self.assumptions.clone(),
+                        conclusions: set_with(
+                            &set_without(&self.conclusions, f),
+                            [body.instantiate(&Expr::Free(fresh.clone()))],
+                        ),
+                        eigenvars: set_with(&self.eigenvars, [fresh]),
+                    };
+                    return unary(
+                        child.proof_search_memo(max_depth, memo),
+                        ProofStep::ForAllRight,
+                    );
+                }
+                Formula::Exists(_, body) if !body.mentions_bound(0) => {
+                    let child = Sequent {
+                        assumptions: self.assumptions.clone(),
+                        conclusions: set_with(&set_without(&self.conclusions, f), [body.lower(0)]),
+                        eigenvars: self.eigenvars.clone(),
+                    };
+                    return unary(
+                        child.proof_search_memo(max_depth, memo),
+                        ProofStep::ExistsRight,
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        // Branching invertible rules.
+        for f in self.conclusions.iter() {
+            if let Formula::And(a, b) = f {
+                let base = set_without(&self.conclusions, f);
+                let left = Sequent {
+                    assumptions: self.assumptions.clone(),
+                    conclusions: set_with(&base, [a.as_ref().clone()]),
+                    eigenvars: self.eigenvars.clone(),
+                };
+                let right = Sequent {
+                    assumptions: self.assumptions.clone(),
+                    conclusions: set_with(&base, [b.as_ref().clone()]),
+                    eigenvars: self.eigenvars.clone(),
+                };
+                let l = left.proof_search_memo(max_depth, memo)?;
+                let r = right.proof_search_memo(max_depth, memo)?;
+                return Some(Proof {
+                    claim: self.clone(),
+                    proof: ProofStep::AndRight(Box::new(l), Box::new(r)),
+                });
+            }
+        }
+        for f in self.assumptions.iter() {
+            match f {
+                Formula::Or(a, b) => {
+                    let base = set_without(&self.assumptions, f);
+                    let left = Sequent {
+                        assumptions: set_with(&base, [a.as_ref().clone()]),
+                        conclusions: self.conclusions.clone(),
+                        eigenvars: self.eigenvars.clone(),
+                    };
+                    let right = Sequent {
+                        assumptions: set_with(&base, [b.as_ref().clone()]),
+                        conclusions: self.conclusions.clone(),
+                        eigenvars: self.eigenvars.clone(),
+                    };
+                    let l = left.proof_search_memo(max_depth, memo)?;
+                    let r = right.proof_search_memo(max_depth, memo)?;
+                    return Some(Proof {
+                        claim: self.clone(),
+                        proof: ProofStep::OrLeft(Box::new(l), Box::new(r)),
+                    });
+                }
+                Formula::Implication(a, b) => {
+                    let base = set_without(&self.assumptions, f);
+                    let left = Sequent {
+                        assumptions: base.clone(),
+                        conclusions: set_with(&self.conclusions, [a.as_ref().clone()]),
+                        eigenvars: self.eigenvars.clone(),
+                    };
+                    let right = Sequent {
+                        assumptions: set_with(&base, [b.as_ref().clone()]),
+                        conclusions: self.conclusions.clone(),
+                        eigenvars: self.eigenvars.clone(),
+                    };
+                    let l = left.proof_search_memo(max_depth, memo)?;
+                    let r = right.proof_search_memo(max_depth, memo)?;
+                    return Some(Proof {
+                        claim: self.clone(),
+                        proof: ProofStep::ImplLeft(Box::new(l), Box::new(r)),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        // Witness phase: only ∀L / ∃R whose body mentions Bound(0) remain —
+        // the sole non-invertible choice. Each instantiation consumes depth.
+        let forall_left: Vec<&Formula> = self
+            .assumptions
+            .iter()
+            .filter_map(|f| match f {
+                Formula::All(_, body) if body.mentions_bound(0) => Some(body.as_ref()),
+                _ => None,
+            })
+            .collect();
+        let exists_right: Vec<&Formula> = self
+            .conclusions
+            .iter()
+            .filter_map(|f| match f {
+                Formula::Exists(_, body) if body.mentions_bound(0) => Some(body.as_ref()),
+                _ => None,
+            })
+            .collect();
+        if forall_left.is_empty() && exists_right.is_empty() {
+            return None;
+        }
+
+        // Fast path: an instance already sitting on the other side closes the
+        // goal immediately with an axiom. Insert `instance` itself — by
+        // definition of `is_instance_of` it equals the instantiated body, and
+        // its witness terms come from the sequent, so they are in scope.
+        for body in &forall_left {
+            for instance in self.conclusions.iter() {
+                if instance.is_instance_of(body, 0).is_some() {
+                    let child = Sequent {
+                        assumptions: set_with(&self.assumptions, [instance.clone()]),
+                        conclusions: self.conclusions.clone(),
+                        eigenvars: self.eigenvars.clone(),
+                    };
+                    return Some(Proof {
+                        claim: self.clone(),
+                        proof: ProofStep::ForAllLeft(Box::new(Proof {
+                            claim: child,
+                            proof: ProofStep::Axiom,
+                        })),
+                    });
+                }
+            }
+        }
+        for body in &exists_right {
+            for instance in self.assumptions.iter() {
+                if instance.is_instance_of(body, 0).is_some() {
+                    let child = Sequent {
+                        assumptions: self.assumptions.clone(),
+                        conclusions: set_with(&self.conclusions, [instance.clone()]),
+                        eigenvars: self.eigenvars.clone(),
+                    };
+                    return Some(Proof {
+                        claim: self.clone(),
+                        proof: ProofStep::ExistsRight(Box::new(Proof {
+                            claim: child,
+                            proof: ProofStep::Axiom,
+                        })),
+                    });
                 }
             }
         }
 
-        // Witness search for ∀L / ∃R when the body mentions Bound(0).
-        // First, try every closed term that already appears in the sequent;
-        // then fall back to systematic enumeration over the signature, up to
+        // Witness search: first every closed term that already appears in the
+        // sequent, then systematic enumeration over the signature, up to
         // (max subterm size + 1) × (max arity + 1) in node count.
         let symbols = self.constants_with_arity();
         let mut subterms: Vec<Expr> = self.closed_subterms().into_iter().collect();
@@ -500,61 +492,43 @@ impl Sequent {
             if !tried.insert(witness.clone()) {
                 continue;
             }
-            for f in self.assumptions.iter() {
-                if let Formula::All(_, body) = f {
-                    if !body.mentions_bound(0) {
-                        continue; // handled by easy case above
-                    }
-                    let instance = body.instantiate(&witness);
-                    if self.assumptions.contains(&instance) {
-                        continue;
-                    }
-                    // Keep `f` in the assumptions: a different witness may be
-                    // needed later in the same proof branch.
-                    let mut new_assms = self.assumptions.clone();
-                    new_assms.insert(instance);
-                    let new_sequent = Sequent {
-                        assumptions: new_assms,
-                        conclusions: self.conclusions.clone(),
-                        eigenvars: self.eigenvars.clone(),
-                    };
-                    if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
-                        return Some(Proof {
-                            claim: self.clone(),
-                            proof: ProofStep::ForAllLeft(Box::new(proof)),
-                        });
-                    }
+            for body in &forall_left {
+                let instance = body.instantiate(&witness);
+                if self.assumptions.contains(&instance) {
+                    continue;
+                }
+                // Keep the ∀ in the assumptions: a different witness may be
+                // needed later in the same proof branch.
+                let child = Sequent {
+                    assumptions: set_with(&self.assumptions, [instance]),
+                    conclusions: self.conclusions.clone(),
+                    eigenvars: self.eigenvars.clone(),
+                };
+                if let Some(proof) = child.proof_search_memo(max_depth - 1, memo) {
+                    return Some(Proof {
+                        claim: self.clone(),
+                        proof: ProofStep::ForAllLeft(Box::new(proof)),
+                    });
                 }
             }
-            for f in self.conclusions.iter() {
-                if let Formula::Exists(_, body) = f {
-                    if !body.mentions_bound(0) {
-                        continue;
-                    }
-                    let instance = body.instantiate(&witness);
-                    if self.conclusions.contains(&instance) {
-                        continue;
-                    }
-                    let mut new_concs = self.conclusions.clone();
-                    new_concs.insert(instance);
-                    let new_sequent = Sequent {
-                        assumptions: self.assumptions.clone(),
-                        conclusions: new_concs,
-                        eigenvars: self.eigenvars.clone(),
-                    };
-                    if let Some(proof) = new_sequent.proof_search_memo(max_depth - 1, memo) {
-                        return Some(Proof {
-                            claim: self.clone(),
-                            proof: ProofStep::ExistsRight(Box::new(proof)),
-                        });
-                    }
+            for body in &exists_right {
+                let instance = body.instantiate(&witness);
+                if self.conclusions.contains(&instance) {
+                    continue;
+                }
+                let child = Sequent {
+                    assumptions: self.assumptions.clone(),
+                    conclusions: set_with(&self.conclusions, [instance]),
+                    eigenvars: self.eigenvars.clone(),
+                };
+                if let Some(proof) = child.proof_search_memo(max_depth - 1, memo) {
+                    return Some(Proof {
+                        claim: self.clone(),
+                        proof: ProofStep::ExistsRight(Box::new(proof)),
+                    });
                 }
             }
         }
-
-        memo.entry(self.clone())
-            .and_modify(|d| *d = (*d).max(max_depth))
-            .or_insert(max_depth);
         None
     }
 
@@ -588,24 +562,8 @@ impl Sequent {
             .sum()
     }
 
-    pub fn new_free_var(&self, preferred: Vec<&str>) -> String {
-        let vars = self.free_vars();
-        for p in preferred.iter() {
-            if !vars.contains(*p) {
-                return p.to_string();
-            }
-        }
-
-        let mut i = 1;
-        loop {
-            for p in preferred.iter() {
-                let candidate = format!("{}_{}", *p, i);
-                if !vars.contains(&candidate) {
-                    return candidate;
-                }
-            }
-            i += 1;
-        }
+    pub fn new_free_var(&self, preferred: &[&str]) -> String {
+        crate::substitution::new_free_var(&self.free_vars(), preferred)
     }
 }
 
@@ -619,7 +577,7 @@ impl Formula {
 
     pub fn collect_free_vars(&self, vars: &mut HashSet<String>) {
         match self {
-            Formula::Bot | Formula::Top => {}
+            Formula::Bot => {}
             Formula::Pred(_, args) => {
                 for a in args {
                     a.collect_free_vars(vars);
@@ -644,7 +602,7 @@ impl Formula {
 
     pub fn collect_all_vars(&self, vars: &mut HashSet<String>) {
         match self {
-            Formula::Bot | Formula::Top => {}
+            Formula::Bot => {}
             Formula::Pred(_, args) => {
                 for a in args {
                     a.collect_free_vars(vars);
@@ -663,30 +621,9 @@ impl Formula {
     }
 
     #[allow(dead_code)]
-    pub fn new_free_var(&self, preferred: Vec<&str>) -> String {
-        let vars = self.free_vars();
-        for p in preferred.iter() {
-            if !vars.contains(*p) {
-                return p.to_string();
-            }
-        }
-
-        let mut i = 1;
-        loop {
-            for p in preferred.iter() {
-                let candidate = format!("{}_{}", *p, i);
-                if !vars.contains(&candidate) {
-                    return candidate;
-                }
-            }
-            i += 1;
-        }
-    }
-
-    #[allow(dead_code)]
     pub fn lift(&self, min: usize) -> Formula {
         match self {
-            Formula::Bot | Formula::Top => self.clone(),
+            Formula::Bot => self.clone(),
             Formula::Pred(name, args) => {
                 Formula::Pred(name.clone(), args.iter().map(|a| a.lift(min)).collect())
             }
@@ -711,9 +648,7 @@ impl Formula {
     /// term works). Returns `None` when there is no instance.
     pub fn is_instance_of(&self, template: &Formula, depth: usize) -> Option<Substitution> {
         match (template, self) {
-            (Formula::Bot, Formula::Bot) | (Formula::Top, Formula::Top) => {
-                Some(Substitution::new())
-            }
+            (Formula::Bot, Formula::Bot) => Some(Substitution::new()),
             (Formula::Pred(n1, a1), Formula::Pred(n2, a2)) if n1 == n2 && a1.len() == a2.len() => {
                 a1.iter()
                     .zip(a2.iter())
@@ -746,7 +681,7 @@ impl Formula {
 
     pub fn lower(&self, min: usize) -> Formula {
         match self {
-            Formula::Bot | Formula::Top => self.clone(),
+            Formula::Bot => self.clone(),
             Formula::Pred(name, args) => {
                 Formula::Pred(name.clone(), args.iter().map(|a| a.lower(min)).collect())
             }
@@ -762,7 +697,7 @@ impl Formula {
     }
     pub fn collect_constants(&self, symbols: &mut HashSet<(String, usize)>) {
         match self {
-            Formula::Bot | Formula::Top => {}
+            Formula::Bot => {}
             Formula::Pred(_, args) => {
                 for a in args {
                     a.collect_constants(symbols);
@@ -781,7 +716,7 @@ impl Formula {
 
     pub fn mentions_bound(&self, idx: usize) -> bool {
         match self {
-            Formula::Bot | Formula::Top => false,
+            Formula::Bot => false,
             Formula::Pred(_, args) => args.iter().any(|a| a.mentions_bound(idx)),
             Formula::Not(g) => g.mentions_bound(idx),
             Formula::And(a, b) | Formula::Or(a, b) | Formula::Implication(a, b) => {
@@ -793,7 +728,7 @@ impl Formula {
 
     pub fn collect_closed_subterms(&self, terms: &mut HashSet<Expr>) {
         match self {
-            Formula::Bot | Formula::Top => {}
+            Formula::Bot => {}
             Formula::Pred(_, args) => {
                 for a in args {
                     a.collect_closed_subterms(terms);
@@ -812,7 +747,7 @@ impl Formula {
 
     pub fn size(&self) -> usize {
         match self {
-            Formula::Bot | Formula::Top => 1,
+            Formula::Bot => 1,
             Formula::Pred(_, args) => 1 + args.iter().map(|a| a.size()).sum::<usize>(),
             Formula::Not(g) => 1 + g.size(),
             Formula::And(a, b) | Formula::Or(a, b) | Formula::Implication(a, b) => {
@@ -889,7 +824,7 @@ impl Formula {
 
     pub fn prec(&self) -> u8 {
         match self {
-            Formula::Bot | Formula::Top | Formula::Pred(_, _) => PREC_ATOM,
+            Formula::Bot | Formula::Pred(_, _) => PREC_ATOM,
             Formula::Not(_) => PREC_NEG,
             Formula::And(_, _) => BinOp::And.prec(),
             Formula::Or(_, _) => BinOp::Or.prec(),
@@ -905,7 +840,6 @@ impl Formula {
         }
         match self {
             Formula::Bot => write!(f, "⊥")?,
-            Formula::Top => write!(f, "⊤")?,
             Formula::Pred(name, args) => {
                 write!(f, "{}", name)?;
                 if !args.is_empty() {
@@ -1087,6 +1021,16 @@ mod tests {
             vec![Expr::Func("f".to_string(), vec![Expr::Bound(0)])],
         );
         assert_eq!(target.is_instance_of(&template, 0), None);
+    }
+
+    #[test]
+    fn vacuous_forall_left_at_depth_one() {
+        // ∀x.P ⊢ P — the body has no Bound(0). This used to panic at depth 1
+        // (empty substitution from is_instance_of, then lookup(0).unwrap()).
+        let mut p = Parser::new("forall x. P => P".to_string()).expect("parser init");
+        let seq = p.parse_sequent().expect("parse_sequent");
+        let proof = seq.proof_search(1).expect("proof at depth 1");
+        proof.check().expect("proof checks");
     }
 
     #[test]

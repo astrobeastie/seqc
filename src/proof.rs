@@ -129,729 +129,49 @@ impl Proof {
     }
 
     pub fn check(&self) -> ProofCheckResult {
-        match &self.proof {
-            ProofStep::Axiom => {
-                if self
-                    .claim
-                    .assumptions
-                    .intersection(&self.claim.conclusions)
-                    .next()
-                    .is_some()
-                {
-                    Ok(())
-                } else {
-                    Err(vec![format!("Cannot apply Axiom on {}", self.claim)])
-                }
-            }
-            ProofStep::BotLeft => {
-                if self.claim.assumptions.contains(&Formula::Bot) {
-                    Ok(())
-                } else {
-                    Err(vec![format!("Cannot apply BotLeft on {}", self.claim)])
-                }
-            }
-            ProofStep::NegLeft(p) => {
-                // check assumption are a subset
-                let mut conc_diff = p.claim.conclusions.difference(&self.claim.conclusions);
-                let Some(f) = conc_diff.next() else {
-                    return Err(vec![
-                        format!("Proof step does not add new Conclusion on {}", p.claim),
-                        format!("While checking NegLeft on {}", self.claim),
-                    ]);
-                };
-                if conc_diff.next().is_some() {
-                    return Err(vec![
-                        format!("Proof step adds multiple new Conclusions on {}", p.claim),
-                        format!("While checking NegLeft on {}", self.claim),
-                    ]);
-                }
-                if !self.claim.assumptions.contains(&f.neg()) {
-                    return Err(vec![
-                        format!(
-                            "Negation of new Conclusion {} does not occur in previous assumptions on {}",
-                            f, p.claim
-                        ),
-                        format!("While checking NegLeft on {}", self.claim),
-                    ]);
-                }
-                if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return Err(vec![
-                        format!("Proof step adds new Assumption on {}", p.claim),
-                        format!("While checking NegLeft on {}", self.claim),
-                    ]);
-                }
-                self.check_eigenvars(p, None, "NegLeft")?;
-                p.check().map_err(|mut e| {
-                    e.push(format!("While checking NegLeft on {}", self.claim));
-                    e
-                })
-            }
-            ProofStep::NegRight(p) => {
-                let mut assum_diff = p.claim.assumptions.difference(&self.claim.assumptions);
-                let Some(f) = assum_diff.next() else {
-                    return Err(vec![
-                        format!("Proof step does not add new Assumption on {}", p.claim),
-                        format!("While checking NegRight on {}", self.claim),
-                    ]);
-                };
-                if assum_diff.next().is_some() {
-                    return Err(vec![
-                        format!("Proof step adds multiple new Assumptions on {}", p.claim),
-                        format!("While checking NegRight on {}", self.claim),
-                    ]);
-                }
-                if !self.claim.conclusions.contains(&f.neg()) {
-                    return Err(vec![
-                        format!(
-                            "Negation of new Assumption {} does not occur in previous conclusions on {}",
-                            f, p.claim
-                        ),
-                        format!("While checking NegRight on {}", self.claim),
-                    ]);
-                }
-                if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return Err(vec![
-                        format!("Proof step adds new Conclusion on {}", p.claim),
-                        format!("While checking NegRight on {}", self.claim),
-                    ]);
-                }
-                self.check_eigenvars(p, None, "NegRight")?;
-                p.check().map_err(|mut e| {
-                    e.push(format!("While checking NegRight on {}", self.claim));
-                    e
-                })
-            }
-            ProofStep::AndLeft(p) => {
-                let diff: HashSet<&Formula> = p
-                    .claim
-                    .assumptions
-                    .difference(&self.claim.assumptions)
-                    .collect();
-                if diff.len() > 2 {
-                    return Err(vec![
-                        format!(
-                            "Proof step adds more than two new Assumptions on {}",
-                            p.claim
-                        ),
-                        format!("While checking AndLeft on {}", self.claim),
-                    ]);
-                }
-                let ok = self.claim.assumptions.iter().any(|g| {
-                    if let Formula::And(a, b) = g {
-                        let a = a.as_ref();
-                        let b = b.as_ref();
-                        diff.iter().all(|x| *x == a || *x == b)
-                    } else {
-                        false
-                    }
-                });
-                if !ok {
-                    return Err(vec![
-                        format!(
-                            "New Assumptions do not match the conjuncts of any conjunction in previous assumptions on {}",
-                            p.claim
-                        ),
-                        format!("While checking AndLeft on {}", self.claim),
-                    ]);
-                }
-                if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return Err(vec![
-                        format!("Proof step adds new Conclusion on {}", p.claim),
-                        format!("While checking AndLeft on {}", self.claim),
-                    ]);
-                }
-                self.check_eigenvars(p, None, "AndLeft")?;
-                p.check().map_err(|mut e| {
-                    e.push(format!("While checking AndLeft on {}", self.claim));
-                    e
-                })
-            }
-            ProofStep::AndRight(p_left, p_right) => {
-                let left_diff: HashSet<&Formula> = p_left
-                    .claim
-                    .conclusions
-                    .difference(&self.claim.conclusions)
-                    .collect();
-                if left_diff.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Left branch adds more than one new Conclusion on {}",
-                            p_left.claim
-                        ),
-                        format!("While checking AndRight on {}", self.claim),
-                    ]);
-                }
-                let right_diff: HashSet<&Formula> = p_right
-                    .claim
-                    .conclusions
-                    .difference(&self.claim.conclusions)
-                    .collect();
-                if right_diff.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Right branch adds more than one new Conclusion on {}",
-                            p_right.claim
-                        ),
-                        format!("While checking AndRight on {}", self.claim),
-                    ]);
-                }
-                let ok = self.claim.conclusions.iter().any(|g| {
-                    if let Formula::And(a, b) = g {
-                        let a = a.as_ref();
-                        let b = b.as_ref();
-                        left_diff.iter().all(|x| *x == a) && right_diff.iter().all(|x| *x == b)
-                    } else {
-                        false
-                    }
-                });
-                if !ok {
-                    return Err(vec![
-                        format!(
-                            "Sub-proofs do not match the conjuncts of any conjunction in previous conclusions on {} and {}",
-                            p_left.claim, p_right.claim
-                        ),
-                        format!("While checking AndRight on {}", self.claim),
-                    ]);
-                }
-                if !p_left.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return Err(vec![
-                        format!("Left branch adds new Assumption on {}", p_left.claim),
-                        format!("While checking AndRight on {}", self.claim),
-                    ]);
-                }
-                if !p_right.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return Err(vec![
-                        format!("Right branch adds new Assumption on {}", p_right.claim),
-                        format!("While checking AndRight on {}", self.claim),
-                    ]);
-                }
-                self.check_eigenvars(p_left, None, "AndRight")?;
-                self.check_eigenvars(p_right, None, "AndRight")?;
-                p_left.check().map_err(|mut e| {
-                    e.push(format!(
-                        "While checking left branch of AndRight on {}",
-                        self.claim
-                    ));
-                    e
-                })?;
-                p_right.check().map_err(|mut e| {
-                    e.push(format!(
-                        "While checking right branch of AndRight on {}",
-                        self.claim
-                    ));
-                    e
-                })?;
-                Ok(())
-            }
-            ProofStep::OrLeft(p_left, p_right) => {
-                let left_diff: HashSet<&Formula> = p_left
-                    .claim
-                    .assumptions
-                    .difference(&self.claim.assumptions)
-                    .collect();
-                if left_diff.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Left branch adds more than one new Assumption on {}",
-                            p_left.claim
-                        ),
-                        format!("While checking OrLeft on {}", self.claim),
-                    ]);
-                }
-                let right_diff: HashSet<&Formula> = p_right
-                    .claim
-                    .assumptions
-                    .difference(&self.claim.assumptions)
-                    .collect();
-                if right_diff.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Right branch adds more than one new Assumption on {}",
-                            p_right.claim
-                        ),
-                        format!("While checking OrLeft on {}", self.claim),
-                    ]);
-                }
-                let ok = self.claim.assumptions.iter().any(|g| {
-                    if let Formula::Or(a, b) = g {
-                        let a = a.as_ref();
-                        let b = b.as_ref();
-                        left_diff.iter().all(|x| *x == a) && right_diff.iter().all(|x| *x == b)
-                    } else {
-                        false
-                    }
-                });
-                if !ok {
-                    return Err(vec![
-                        format!(
-                            "Sub-proofs do not match the disjuncts of any disjunction in previous assumptions on {} and {}",
-                            p_left.claim, p_right.claim
-                        ),
-                        format!("While checking OrLeft on {}", self.claim),
-                    ]);
-                }
-                if !p_left.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return Err(vec![
-                        format!("Left branch adds new Conclusion on {}", p_left.claim),
-                        format!("While checking OrLeft on {}", self.claim),
-                    ]);
-                }
-                if !p_right.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return Err(vec![
-                        format!("Right branch adds new Conclusion on {}", p_right.claim),
-                        format!("While checking OrLeft on {}", self.claim),
-                    ]);
-                }
-                self.check_eigenvars(p_left, None, "OrLeft")?;
-                self.check_eigenvars(p_right, None, "OrLeft")?;
-                p_left.check().map_err(|mut e| {
-                    e.push(format!(
-                        "While checking left branch of OrLeft on {}",
-                        self.claim
-                    ));
-                    e
-                })?;
-                p_right.check().map_err(|mut e| {
-                    e.push(format!(
-                        "While checking right branch of OrLeft on {}",
-                        self.claim
-                    ));
-                    e
-                })?;
-                Ok(())
-            }
-            ProofStep::OrRight(p) => {
-                let diff: HashSet<&Formula> = p
-                    .claim
-                    .conclusions
-                    .difference(&self.claim.conclusions)
-                    .collect();
-                if diff.len() > 2 {
-                    return Err(vec![
-                        format!(
-                            "Proof step adds more than two new Conclusions on {}",
-                            p.claim
-                        ),
-                        format!("While checking OrRight on {}", self.claim),
-                    ]);
-                }
-                let ok = self.claim.conclusions.iter().any(|g| {
-                    if let Formula::Or(a, b) = g {
-                        let a = a.as_ref();
-                        let b = b.as_ref();
-                        diff.iter().all(|x| *x == a || *x == b)
-                    } else {
-                        false
-                    }
-                });
-                if !ok {
-                    return Err(vec![
-                        format!(
-                            "New Conclusions do not match the disjuncts of any disjunction in previous conclusions on {}",
-                            p.claim
-                        ),
-                        format!("While checking OrRight on {}", self.claim),
-                    ]);
-                }
-                if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return Err(vec![
-                        format!("Proof step adds new Assumption on {}", p.claim),
-                        format!("While checking OrRight on {}", self.claim),
-                    ]);
-                }
-                self.check_eigenvars(p, None, "OrRight")?;
-                p.check().map_err(|mut e| {
-                    e.push(format!("While checking OrRight on {}", self.claim));
-                    e
-                })
-            }
-            ProofStep::ImplLeft(p_left, p_right) => {
-                let left_diff: HashSet<&Formula> = p_left
-                    .claim
-                    .conclusions
-                    .difference(&self.claim.conclusions)
-                    .collect();
-                if left_diff.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Left branch adds more than one new Conclusion on {}",
-                            p_left.claim
-                        ),
-                        format!("While checking ImplLeft on {}", self.claim),
-                    ]);
-                }
-                let right_diff: HashSet<&Formula> = p_right
-                    .claim
-                    .assumptions
-                    .difference(&self.claim.assumptions)
-                    .collect();
-                if right_diff.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Right branch adds more than one new Assumption on {}",
-                            p_right.claim
-                        ),
-                        format!("While checking ImplLeft on {}", self.claim),
-                    ]);
-                }
-                let ok = self.claim.assumptions.iter().any(|g| {
-                    if let Formula::Implication(a, b) = g {
-                        let a = a.as_ref();
-                        let b = b.as_ref();
-                        left_diff.iter().all(|x| *x == a) && right_diff.iter().all(|x| *x == b)
-                    } else {
-                        false
-                    }
-                });
-                if !ok {
-                    return Err(vec![
-                        format!(
-                            "Sub-proofs do not match an implication in previous assumptions on {} and {}",
-                            p_left.claim, p_right.claim
-                        ),
-                        format!("While checking ImplLeft on {}", self.claim),
-                    ]);
-                }
-                if !p_left.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return Err(vec![
-                        format!("Left branch adds new Assumption on {}", p_left.claim),
-                        format!("While checking ImplLeft on {}", self.claim),
-                    ]);
-                }
-                if !p_right.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return Err(vec![
-                        format!("Right branch adds new Conclusion on {}", p_right.claim),
-                        format!("While checking ImplLeft on {}", self.claim),
-                    ]);
-                }
-                self.check_eigenvars(p_left, None, "ImplLeft")?;
-                self.check_eigenvars(p_right, None, "ImplLeft")?;
-                p_left.check().map_err(|mut e| {
-                    e.push(format!(
-                        "While checking left branch of ImplLeft on {}",
-                        self.claim
-                    ));
-                    e
-                })?;
-                p_right.check().map_err(|mut e| {
-                    e.push(format!(
-                        "While checking right branch of ImplLeft on {}",
-                        self.claim
-                    ));
-                    e
-                })?;
-                Ok(())
-            }
-            ProofStep::ImplRight(p) => {
-                let assum_diff: HashSet<&Formula> = p
-                    .claim
-                    .assumptions
-                    .difference(&self.claim.assumptions)
-                    .collect();
-                if assum_diff.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Proof step adds more than one new Assumption on {}",
-                            p.claim
-                        ),
-                        format!("While checking ImplRight on {}", self.claim),
-                    ]);
-                }
-                let conc_diff: HashSet<&Formula> = p
-                    .claim
-                    .conclusions
-                    .difference(&self.claim.conclusions)
-                    .collect();
-                if conc_diff.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Proof step adds more than one new Conclusion on {}",
-                            p.claim
-                        ),
-                        format!("While checking ImplRight on {}", self.claim),
-                    ]);
-                }
-                let ok = self.claim.conclusions.iter().any(|g| {
-                    if let Formula::Implication(a, b) = g {
-                        let a = a.as_ref();
-                        let b = b.as_ref();
-                        assum_diff.iter().all(|x| *x == a) && conc_diff.iter().all(|x| *x == b)
-                    } else {
-                        false
-                    }
-                });
-                if !ok {
-                    return Err(vec![
-                        format!(
-                            "Sub-proof does not match an implication in previous conclusions on {}",
-                            p.claim
-                        ),
-                        format!("While checking ImplRight on {}", self.claim),
-                    ]);
-                }
-                self.check_eigenvars(p, None, "ImplRight")?;
-                p.check().map_err(|mut e| {
-                    e.push(format!("While checking ImplRight on {}", self.claim));
-                    e
-                })
-            }
-            ProofStep::ForAllLeft(p) => {
-                let diff: HashSet<&Formula> = p
-                    .claim
-                    .assumptions
-                    .difference(&self.claim.assumptions)
-                    .collect();
-                if diff.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Proof step adds more than one new Assumption on {}",
-                            p.claim
-                        ),
-                        format!("While checking ForAllLeft on {}", self.claim),
-                    ]);
-                }
-                if let Some(f) = diff.iter().next() {
-                    let witness = self.claim.assumptions.iter().find_map(|g| match g {
-                        Formula::All(_, body) => {
-                            f.is_instance_of(body, 0).map(|s| s.lookup(0).cloned())
-                        }
-                        _ => None,
-                    });
-                    let Some(witness) = witness else {
-                        return Err(vec![
-                            format!(
-                                "No ∀ in previous assumptions matches the sub-proof on {}",
-                                p.claim
-                            ),
-                            format!("While checking ForAllLeft on {}", self.claim),
-                        ]);
-                    };
-                    if let Some(w) = witness {
-                        if !w
-                            .constants_with_arity()
-                            .is_subset(&self.claim.constants_with_arity())
-                        {
-                            return Err(vec![
-                                format!("Witness {} uses constants not in scope on {}", w, p.claim),
-                                format!("While checking ForAllLeft on {}", self.claim),
-                            ]);
-                        }
-                    }
-                }
-                if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return Err(vec![
-                        format!("Proof step adds new Conclusion on {}", p.claim),
-                        format!("While checking ForAllLeft on {}", self.claim),
-                    ]);
-                }
-                self.check_eigenvars(p, None, "ForAllLeft")?;
-                p.check().map_err(|mut e| {
-                    e.push(format!("While checking ForAllLeft on {}", self.claim));
-                    e
-                })
-            }
-            ProofStep::ForAllRight(p) => {
-                let diff: HashSet<&Formula> = p
-                    .claim
-                    .conclusions
-                    .difference(&self.claim.conclusions)
-                    .collect();
-                if diff.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Proof step adds more than one new Conclusion on {}",
-                            p.claim
-                        ),
-                        format!("While checking ForAllRight on {}", self.claim),
-                    ]);
-                }
-                let self_free = self.claim.free_vars();
-                let p_free = p.claim.free_vars();
-                let new_vars: Vec<&String> = p_free.difference(&self_free).collect();
-                if new_vars.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Sub-proof introduces more than one new free variable on {}",
-                            p.claim
-                        ),
-                        format!("While checking ForAllRight on {}", self.claim),
-                    ]);
-                }
-                let new_eigenvar: Option<&String> = new_vars.into_iter().next();
-                if let Some(f) = diff.iter().next() {
-                    let ok = self.claim.conclusions.iter().any(|g| {
-                        let Formula::All(_, body) = g else {
-                            return false;
-                        };
-                        match f.is_instance_of(body, 0) {
-                            None => false,
-                            Some(sub) if sub.bindings.is_empty() => true,
-                            Some(sub) => match (sub.lookup(0), new_eigenvar) {
-                                (Some(Expr::Free(y)), Some(intro)) => y == intro,
-                                _ => false,
-                            },
-                        }
-                    });
-                    if !ok {
-                        return Err(vec![
-                            format!(
-                                "No ∀ in previous conclusions matches the sub-proof with a fresh eigenvariable on {}",
-                                p.claim
-                            ),
-                            format!("While checking ForAllRight on {}", self.claim),
-                        ]);
-                    }
-                }
-                if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return Err(vec![
-                        format!("Proof step adds new Assumption on {}", p.claim),
-                        format!("While checking ForAllRight on {}", self.claim),
-                    ]);
-                }
-                self.check_eigenvars(p, new_eigenvar.map(|s| s.as_str()), "ForAllRight")?;
-                p.check().map_err(|mut e| {
-                    e.push(format!("While checking ForAllRight on {}", self.claim));
-                    e
-                })
-            }
-            ProofStep::ExistsLeft(p) => {
-                let diff: HashSet<&Formula> = p
-                    .claim
-                    .assumptions
-                    .difference(&self.claim.assumptions)
-                    .collect();
-                if diff.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Proof step adds more than one new Assumption on {}",
-                            p.claim
-                        ),
-                        format!("While checking ExistsLeft on {}", self.claim),
-                    ]);
-                }
-                let self_free = self.claim.free_vars();
-                let p_free = p.claim.free_vars();
-                let new_vars: Vec<&String> = p_free.difference(&self_free).collect();
-                if new_vars.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Sub-proof introduces more than one new free variable on {}",
-                            p.claim
-                        ),
-                        format!("While checking ExistsLeft on {}", self.claim),
-                    ]);
-                }
-                let new_eigenvar: Option<&String> = new_vars.into_iter().next();
-                if let Some(f) = diff.iter().next() {
-                    let ok = self.claim.assumptions.iter().any(|g| {
-                        let Formula::Exists(_, body) = g else {
-                            return false;
-                        };
-                        match f.is_instance_of(body, 0) {
-                            None => false,
-                            Some(sub) if sub.bindings.is_empty() => true,
-                            Some(sub) => match (sub.lookup(0), new_eigenvar) {
-                                (Some(Expr::Free(y)), Some(intro)) => y == intro,
-                                _ => false,
-                            },
-                        }
-                    });
-                    if !ok {
-                        return Err(vec![
-                            format!(
-                                "No ∃ in previous assumptions matches the sub-proof with a fresh eigenvariable on {}",
-                                p.claim
-                            ),
-                            format!("While checking ExistsLeft on {}", self.claim),
-                        ]);
-                    }
-                }
-                if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return Err(vec![
-                        format!("Proof step adds new Conclusion on {}", p.claim),
-                        format!("While checking ExistsLeft on {}", self.claim),
-                    ]);
-                }
-                self.check_eigenvars(p, new_eigenvar.map(|s| s.as_str()), "ExistsLeft")?;
-                p.check().map_err(|mut e| {
-                    e.push(format!("While checking ExistsLeft on {}", self.claim));
-                    e
-                })
-            }
-            ProofStep::ExistsRight(p) => {
-                let diff: HashSet<&Formula> = p
-                    .claim
-                    .conclusions
-                    .difference(&self.claim.conclusions)
-                    .collect();
-                if diff.len() > 1 {
-                    return Err(vec![
-                        format!(
-                            "Proof step adds more than one new Conclusion on {}",
-                            p.claim
-                        ),
-                        format!("While checking ExistsRight on {}", self.claim),
-                    ]);
-                }
-                if let Some(f) = diff.iter().next() {
-                    let witness = self.claim.conclusions.iter().find_map(|g| match g {
-                        Formula::Exists(_, body) => {
-                            f.is_instance_of(body, 0).map(|s| s.lookup(0).cloned())
-                        }
-                        _ => None,
-                    });
-                    let Some(witness) = witness else {
-                        return Err(vec![
-                            format!(
-                                "No ∃ in previous conclusions matches the sub-proof on {}",
-                                p.claim
-                            ),
-                            format!("While checking ExistsRight on {}", self.claim),
-                        ]);
-                    };
-                    if let Some(w) = witness {
-                        if !w
-                            .constants_with_arity()
-                            .is_subset(&self.claim.constants_with_arity())
-                        {
-                            return Err(vec![
-                                format!("Witness {} uses constants not in scope on {}", w, p.claim),
-                                format!("While checking ExistsRight on {}", self.claim),
-                            ]);
-                        }
-                    }
-                }
-                if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return Err(vec![
-                        format!("Proof step adds new Assumption on {}", p.claim),
-                        format!("While checking ExistsRight on {}", self.claim),
-                    ]);
-                }
-                self.check_eigenvars(p, None, "ExistsRight")?;
-                p.check().map_err(|mut e| {
-                    e.push(format!("While checking ExistsRight on {}", self.claim));
-                    e
-                })
-            }
-        }
+        self.strip_checked().map(|_| ())
     }
 
     /// Validate the proof and, on success, return an equivalent proof in which
     /// each sequent has been pruned to the minimum assumptions and conclusions
     /// needed at that step. Returns `None` if any rule application is invalid.
     pub fn strip(&self) -> Option<Proof> {
+        self.strip_checked().ok()
+    }
+
+    /// Recurse into a sub-proof, adding "While checking …" context to errors.
+    fn sub_checked(&self, p: &Proof, label: &str) -> Result<Proof, ProofCheckError> {
+        p.strip_checked().map_err(|mut e| {
+            e.push(format!("While checking {} on {}", label, self.claim));
+            e
+        })
+    }
+
+    fn fail(&self, line: String, rule: &str) -> Result<Proof, ProofCheckError> {
+        Err(vec![
+            line,
+            format!("While checking {} on {}", rule, self.claim),
+        ])
+    }
+
+    /// The single validation-and-pruning pass behind both `check` and `strip`:
+    /// verifies every rule application (with a detailed error trace on
+    /// failure) and, on success, returns the equivalent pruned proof.
+    fn strip_checked(&self) -> Result<Proof, ProofCheckError> {
         match &self.proof {
             ProofStep::Axiom => {
-                let f = self
+                let Some(f) = self
                     .claim
                     .assumptions
                     .intersection(&self.claim.conclusions)
-                    .next()?
-                    .clone();
-                Some(Proof {
+                    .next()
+                else {
+                    return Err(vec![format!("Cannot apply Axiom on {}", self.claim)]);
+                };
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: crate::hash_set! {f.clone()},
-                        conclusions: crate::hash_set! {f},
+                        conclusions: crate::hash_set! {f.clone()},
                         eigenvars: HashSet::new(),
                     },
                     proof: ProofStep::Axiom,
@@ -859,9 +179,9 @@ impl Proof {
             }
             ProofStep::BotLeft => {
                 if !self.claim.assumptions.contains(&Formula::Bot) {
-                    return None;
+                    return Err(vec![format!("Cannot apply BotLeft on {}", self.claim)]);
                 }
-                Some(Proof {
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: crate::hash_set! {Formula::Bot},
                         conclusions: HashSet::new(),
@@ -871,26 +191,64 @@ impl Proof {
                 })
             }
             ProofStep::NegLeft(p) => {
-                if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return None;
-                }
+                let rule = "NegLeft";
                 let mut conc_diff = p.claim.conclusions.difference(&self.claim.conclusions);
-                let g = conc_diff.next()?.clone();
+                let g = conc_diff.next();
                 if conc_diff.next().is_some() {
-                    return None;
+                    return self.fail(
+                        format!("Proof step adds multiple new Conclusions on {}", p.claim),
+                        rule,
+                    );
                 }
+                let g = match g {
+                    Some(g) => g.clone(),
+                    // Redundant but valid application: the unnegated formula was
+                    // already among the conclusions.
+                    None => {
+                        match self.claim.assumptions.iter().find_map(|h| match h {
+                            Formula::Not(inner) if p.claim.conclusions.contains(inner.as_ref()) => {
+                                Some(inner.as_ref().clone())
+                            }
+                            _ => None,
+                        }) {
+                            Some(g) => g,
+                            None => {
+                                return self.fail(
+                                    format!(
+                                        "Proof step does not add new Conclusion on {}",
+                                        p.claim
+                                    ),
+                                    rule,
+                                );
+                            }
+                        }
+                    }
+                };
                 if !self.claim.assumptions.contains(&g.neg()) {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Negation of new Conclusion {} does not occur in previous assumptions on {}",
+                            g, p.claim
+                        ),
+                        rule,
+                    );
                 }
-                let p_s = p.strip()?;
+                if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
+                    return self.fail(
+                        format!("Proof step adds new Assumption on {}", p.claim),
+                        rule,
+                    );
+                }
+                self.check_eigenvars(p, None, rule)?;
+                let p_s = self.sub_checked(p, rule)?;
                 if !p_s.claim.conclusions.contains(&g) {
-                    return Some(p_s);
+                    return Ok(p_s);
                 }
                 let mut assms = p_s.claim.assumptions.clone();
                 assms.insert(g.neg());
                 let mut concs = p_s.claim.conclusions.clone();
                 concs.remove(&g);
-                Some(Proof {
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: concs,
@@ -900,26 +258,64 @@ impl Proof {
                 })
             }
             ProofStep::NegRight(p) => {
-                if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return None;
-                }
+                let rule = "NegRight";
                 let mut assum_diff = p.claim.assumptions.difference(&self.claim.assumptions);
-                let g = assum_diff.next()?.clone();
+                let g = assum_diff.next();
                 if assum_diff.next().is_some() {
-                    return None;
+                    return self.fail(
+                        format!("Proof step adds multiple new Assumptions on {}", p.claim),
+                        rule,
+                    );
                 }
+                let g = match g {
+                    Some(g) => g.clone(),
+                    // Redundant but valid application: the unnegated formula was
+                    // already among the assumptions.
+                    None => {
+                        match self.claim.conclusions.iter().find_map(|h| match h {
+                            Formula::Not(inner) if p.claim.assumptions.contains(inner.as_ref()) => {
+                                Some(inner.as_ref().clone())
+                            }
+                            _ => None,
+                        }) {
+                            Some(g) => g,
+                            None => {
+                                return self.fail(
+                                    format!(
+                                        "Proof step does not add new Assumption on {}",
+                                        p.claim
+                                    ),
+                                    rule,
+                                );
+                            }
+                        }
+                    }
+                };
                 if !self.claim.conclusions.contains(&g.neg()) {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Negation of new Assumption {} does not occur in previous conclusions on {}",
+                            g, p.claim
+                        ),
+                        rule,
+                    );
                 }
-                let p_s = p.strip()?;
+                if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
+                    return self.fail(
+                        format!("Proof step adds new Conclusion on {}", p.claim),
+                        rule,
+                    );
+                }
+                self.check_eigenvars(p, None, rule)?;
+                let p_s = self.sub_checked(p, rule)?;
                 if !p_s.claim.assumptions.contains(&g) {
-                    return Some(p_s);
+                    return Ok(p_s);
                 }
                 let mut assms = p_s.claim.assumptions.clone();
                 assms.remove(&g);
                 let mut concs = p_s.claim.conclusions.clone();
                 concs.insert(g.neg());
-                Some(Proof {
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: concs,
@@ -929,38 +325,56 @@ impl Proof {
                 })
             }
             ProofStep::AndLeft(p) => {
-                if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return None;
-                }
+                let rule = "AndLeft";
                 let diff: HashSet<&Formula> = p
                     .claim
                     .assumptions
                     .difference(&self.claim.assumptions)
                     .collect();
                 if diff.len() > 2 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Proof step adds more than two new Assumptions on {}",
+                            p.claim
+                        ),
+                        rule,
+                    );
                 }
-                let principal = self.claim.assumptions.iter().find_map(|g| match g {
-                    Formula::And(a, b)
-                        if diff.iter().all(|x| *x == a.as_ref() || *x == b.as_ref()) =>
-                    {
-                        Some(g.clone())
+                let Some(principal) = self.claim.assumptions.iter().find(|g| match g {
+                    Formula::And(a, b) => {
+                        diff.iter().all(|x| *x == a.as_ref() || *x == b.as_ref())
                     }
-                    _ => None,
-                })?;
-                let (la, lb) = match &principal {
-                    Formula::And(a, b) => (a.as_ref().clone(), b.as_ref().clone()),
-                    _ => unreachable!(),
+                    _ => false,
+                }) else {
+                    return self.fail(
+                        format!(
+                            "New Assumptions do not match the conjuncts of any conjunction in previous assumptions on {}",
+                            p.claim
+                        ),
+                        rule,
+                    );
                 };
-                let p_s = p.strip()?;
+                let Formula::And(a, b) = principal else {
+                    unreachable!()
+                };
+                let (la, lb) = (a.as_ref().clone(), b.as_ref().clone());
+                let principal = principal.clone();
+                if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
+                    return self.fail(
+                        format!("Proof step adds new Conclusion on {}", p.claim),
+                        rule,
+                    );
+                }
+                self.check_eigenvars(p, None, rule)?;
+                let p_s = self.sub_checked(p, rule)?;
                 if !p_s.claim.assumptions.contains(&la) && !p_s.claim.assumptions.contains(&lb) {
-                    return Some(p_s);
+                    return Ok(p_s);
                 }
                 let mut assms = p_s.claim.assumptions.clone();
                 assms.remove(&la);
                 assms.remove(&lb);
                 assms.insert(principal);
-                Some(Proof {
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: p_s.claim.conclusions.clone(),
@@ -969,53 +383,81 @@ impl Proof {
                     proof: ProofStep::AndLeft(Box::new(p_s)),
                 })
             }
-            ProofStep::AndRight(p_l, p_r) => {
-                if !p_l.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return None;
-                }
-                if !p_r.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return None;
-                }
-                let left_diff: HashSet<&Formula> = p_l
+            ProofStep::AndRight(p_left, p_right) => {
+                let rule = "AndRight";
+                let left_diff: HashSet<&Formula> = p_left
                     .claim
                     .conclusions
                     .difference(&self.claim.conclusions)
                     .collect();
                 if left_diff.len() > 1 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Left branch adds more than one new Conclusion on {}",
+                            p_left.claim
+                        ),
+                        rule,
+                    );
                 }
-                let right_diff: HashSet<&Formula> = p_r
+                let right_diff: HashSet<&Formula> = p_right
                     .claim
                     .conclusions
                     .difference(&self.claim.conclusions)
                     .collect();
                 if right_diff.len() > 1 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Right branch adds more than one new Conclusion on {}",
+                            p_right.claim
+                        ),
+                        rule,
+                    );
                 }
-                let principal = self.claim.conclusions.iter().find_map(|g| match g {
-                    Formula::And(a, b)
-                        if left_diff.iter().all(|x| *x == a.as_ref())
-                            && right_diff.iter().all(|x| *x == b.as_ref()) =>
-                    {
-                        Some(g.clone())
+                let Some(principal) = self.claim.conclusions.iter().find(|g| match g {
+                    Formula::And(a, b) => {
+                        left_diff.iter().all(|x| *x == a.as_ref())
+                            && right_diff.iter().all(|x| *x == b.as_ref())
                     }
-                    _ => None,
-                })?;
-                let (la, lb) = match &principal {
-                    Formula::And(a, b) => (a.as_ref().clone(), b.as_ref().clone()),
-                    _ => unreachable!(),
+                    _ => false,
+                }) else {
+                    return self.fail(
+                        format!(
+                            "Sub-proofs do not match the conjuncts of any conjunction in previous conclusions on {} and {}",
+                            p_left.claim, p_right.claim
+                        ),
+                        rule,
+                    );
                 };
-                let l_s = p_l.strip()?;
-                let r_s = p_r.strip()?;
+                let Formula::And(a, b) = principal else {
+                    unreachable!()
+                };
+                let (la, lb) = (a.as_ref().clone(), b.as_ref().clone());
+                let principal = principal.clone();
+                if !p_left.claim.assumptions.is_subset(&self.claim.assumptions) {
+                    return self.fail(
+                        format!("Left branch adds new Assumption on {}", p_left.claim),
+                        rule,
+                    );
+                }
+                if !p_right.claim.assumptions.is_subset(&self.claim.assumptions) {
+                    return self.fail(
+                        format!("Right branch adds new Assumption on {}", p_right.claim),
+                        rule,
+                    );
+                }
+                self.check_eigenvars(p_left, None, rule)?;
+                self.check_eigenvars(p_right, None, rule)?;
+                let l_s = self.sub_checked(p_left, "left branch of AndRight")?;
+                let r_s = self.sub_checked(p_right, "right branch of AndRight")?;
                 if !l_s.claim.conclusions.contains(&la) && !r_s.claim.conclusions.contains(&lb) {
-                    return Some(l_s);
+                    return Ok(l_s);
                 }
                 let assms = &l_s.claim.assumptions | &r_s.claim.assumptions;
                 let concs = &(&(&l_s.claim.conclusions - &crate::hash_set! {la})
                     | &(&r_s.claim.conclusions - &crate::hash_set! {lb}))
                     | &crate::hash_set! {principal};
                 let eigenvars = &l_s.claim.eigenvars | &r_s.claim.eigenvars;
-                Some(Proof {
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: concs,
@@ -1024,53 +466,81 @@ impl Proof {
                     proof: ProofStep::AndRight(Box::new(l_s), Box::new(r_s)),
                 })
             }
-            ProofStep::OrLeft(p_l, p_r) => {
-                if !p_l.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return None;
-                }
-                if !p_r.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return None;
-                }
-                let left_diff: HashSet<&Formula> = p_l
+            ProofStep::OrLeft(p_left, p_right) => {
+                let rule = "OrLeft";
+                let left_diff: HashSet<&Formula> = p_left
                     .claim
                     .assumptions
                     .difference(&self.claim.assumptions)
                     .collect();
                 if left_diff.len() > 1 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Left branch adds more than one new Assumption on {}",
+                            p_left.claim
+                        ),
+                        rule,
+                    );
                 }
-                let right_diff: HashSet<&Formula> = p_r
+                let right_diff: HashSet<&Formula> = p_right
                     .claim
                     .assumptions
                     .difference(&self.claim.assumptions)
                     .collect();
                 if right_diff.len() > 1 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Right branch adds more than one new Assumption on {}",
+                            p_right.claim
+                        ),
+                        rule,
+                    );
                 }
-                let principal = self.claim.assumptions.iter().find_map(|g| match g {
-                    Formula::Or(a, b)
-                        if left_diff.iter().all(|x| *x == a.as_ref())
-                            && right_diff.iter().all(|x| *x == b.as_ref()) =>
-                    {
-                        Some(g.clone())
+                let Some(principal) = self.claim.assumptions.iter().find(|g| match g {
+                    Formula::Or(a, b) => {
+                        left_diff.iter().all(|x| *x == a.as_ref())
+                            && right_diff.iter().all(|x| *x == b.as_ref())
                     }
-                    _ => None,
-                })?;
-                let (la, lb) = match &principal {
-                    Formula::Or(a, b) => (a.as_ref().clone(), b.as_ref().clone()),
-                    _ => unreachable!(),
+                    _ => false,
+                }) else {
+                    return self.fail(
+                        format!(
+                            "Sub-proofs do not match the disjuncts of any disjunction in previous assumptions on {} and {}",
+                            p_left.claim, p_right.claim
+                        ),
+                        rule,
+                    );
                 };
-                let l_s = p_l.strip()?;
-                let r_s = p_r.strip()?;
+                let Formula::Or(a, b) = principal else {
+                    unreachable!()
+                };
+                let (la, lb) = (a.as_ref().clone(), b.as_ref().clone());
+                let principal = principal.clone();
+                if !p_left.claim.conclusions.is_subset(&self.claim.conclusions) {
+                    return self.fail(
+                        format!("Left branch adds new Conclusion on {}", p_left.claim),
+                        rule,
+                    );
+                }
+                if !p_right.claim.conclusions.is_subset(&self.claim.conclusions) {
+                    return self.fail(
+                        format!("Right branch adds new Conclusion on {}", p_right.claim),
+                        rule,
+                    );
+                }
+                self.check_eigenvars(p_left, None, rule)?;
+                self.check_eigenvars(p_right, None, rule)?;
+                let l_s = self.sub_checked(p_left, "left branch of OrLeft")?;
+                let r_s = self.sub_checked(p_right, "right branch of OrLeft")?;
                 if !l_s.claim.assumptions.contains(&la) && !r_s.claim.assumptions.contains(&lb) {
-                    return Some(l_s);
+                    return Ok(l_s);
                 }
                 let assms = &(&(&l_s.claim.assumptions - &crate::hash_set! {la})
                     | &(&r_s.claim.assumptions - &crate::hash_set! {lb}))
                     | &crate::hash_set! {principal};
                 let concs = &l_s.claim.conclusions | &r_s.claim.conclusions;
                 let eigenvars = &l_s.claim.eigenvars | &r_s.claim.eigenvars;
-                Some(Proof {
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: concs,
@@ -1080,38 +550,56 @@ impl Proof {
                 })
             }
             ProofStep::OrRight(p) => {
-                if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return None;
-                }
+                let rule = "OrRight";
                 let diff: HashSet<&Formula> = p
                     .claim
                     .conclusions
                     .difference(&self.claim.conclusions)
                     .collect();
                 if diff.len() > 2 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Proof step adds more than two new Conclusions on {}",
+                            p.claim
+                        ),
+                        rule,
+                    );
                 }
-                let principal = self.claim.conclusions.iter().find_map(|g| match g {
-                    Formula::Or(a, b)
-                        if diff.iter().all(|x| *x == a.as_ref() || *x == b.as_ref()) =>
-                    {
-                        Some(g.clone())
+                let Some(principal) = self.claim.conclusions.iter().find(|g| match g {
+                    Formula::Or(a, b) => {
+                        diff.iter().all(|x| *x == a.as_ref() || *x == b.as_ref())
                     }
-                    _ => None,
-                })?;
-                let (la, lb) = match &principal {
-                    Formula::Or(a, b) => (a.as_ref().clone(), b.as_ref().clone()),
-                    _ => unreachable!(),
+                    _ => false,
+                }) else {
+                    return self.fail(
+                        format!(
+                            "New Conclusions do not match the disjuncts of any disjunction in previous conclusions on {}",
+                            p.claim
+                        ),
+                        rule,
+                    );
                 };
-                let p_s = p.strip()?;
+                let Formula::Or(a, b) = principal else {
+                    unreachable!()
+                };
+                let (la, lb) = (a.as_ref().clone(), b.as_ref().clone());
+                let principal = principal.clone();
+                if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
+                    return self.fail(
+                        format!("Proof step adds new Assumption on {}", p.claim),
+                        rule,
+                    );
+                }
+                self.check_eigenvars(p, None, rule)?;
+                let p_s = self.sub_checked(p, rule)?;
                 if !p_s.claim.conclusions.contains(&la) && !p_s.claim.conclusions.contains(&lb) {
-                    return Some(p_s);
+                    return Ok(p_s);
                 }
                 let mut concs = p_s.claim.conclusions.clone();
                 concs.remove(&la);
                 concs.remove(&lb);
                 concs.insert(principal);
-                Some(Proof {
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: p_s.claim.assumptions.clone(),
                         conclusions: concs,
@@ -1120,46 +608,74 @@ impl Proof {
                     proof: ProofStep::OrRight(Box::new(p_s)),
                 })
             }
-            ProofStep::ImplLeft(p_l, p_r) => {
-                if !p_l.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return None;
-                }
-                if !p_r.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return None;
-                }
-                let left_diff: HashSet<&Formula> = p_l
+            ProofStep::ImplLeft(p_left, p_right) => {
+                let rule = "ImplLeft";
+                let left_diff: HashSet<&Formula> = p_left
                     .claim
                     .conclusions
                     .difference(&self.claim.conclusions)
                     .collect();
                 if left_diff.len() > 1 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Left branch adds more than one new Conclusion on {}",
+                            p_left.claim
+                        ),
+                        rule,
+                    );
                 }
-                let right_diff: HashSet<&Formula> = p_r
+                let right_diff: HashSet<&Formula> = p_right
                     .claim
                     .assumptions
                     .difference(&self.claim.assumptions)
                     .collect();
                 if right_diff.len() > 1 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Right branch adds more than one new Assumption on {}",
+                            p_right.claim
+                        ),
+                        rule,
+                    );
                 }
-                let principal = self.claim.assumptions.iter().find_map(|g| match g {
-                    Formula::Implication(a, b)
-                        if left_diff.iter().all(|x| *x == a.as_ref())
-                            && right_diff.iter().all(|x| *x == b.as_ref()) =>
-                    {
-                        Some(g.clone())
+                let Some(principal) = self.claim.assumptions.iter().find(|g| match g {
+                    Formula::Implication(a, b) => {
+                        left_diff.iter().all(|x| *x == a.as_ref())
+                            && right_diff.iter().all(|x| *x == b.as_ref())
                     }
-                    _ => None,
-                })?;
-                let (la, lb) = match &principal {
-                    Formula::Implication(a, b) => (a.as_ref().clone(), b.as_ref().clone()),
-                    _ => unreachable!(),
+                    _ => false,
+                }) else {
+                    return self.fail(
+                        format!(
+                            "Sub-proofs do not match an implication in previous assumptions on {} and {}",
+                            p_left.claim, p_right.claim
+                        ),
+                        rule,
+                    );
                 };
-                let l_s = p_l.strip()?;
-                let r_s = p_r.strip()?;
+                let Formula::Implication(a, b) = principal else {
+                    unreachable!()
+                };
+                let (la, lb) = (a.as_ref().clone(), b.as_ref().clone());
+                let principal = principal.clone();
+                if !p_left.claim.assumptions.is_subset(&self.claim.assumptions) {
+                    return self.fail(
+                        format!("Left branch adds new Assumption on {}", p_left.claim),
+                        rule,
+                    );
+                }
+                if !p_right.claim.conclusions.is_subset(&self.claim.conclusions) {
+                    return self.fail(
+                        format!("Right branch adds new Conclusion on {}", p_right.claim),
+                        rule,
+                    );
+                }
+                self.check_eigenvars(p_left, None, rule)?;
+                self.check_eigenvars(p_right, None, rule)?;
+                let l_s = self.sub_checked(p_left, "left branch of ImplLeft")?;
+                let r_s = self.sub_checked(p_right, "right branch of ImplLeft")?;
                 if !l_s.claim.conclusions.contains(&la) && !r_s.claim.assumptions.contains(&lb) {
-                    return Some(l_s);
+                    return Ok(l_s);
                 }
                 let assms = &(&l_s.claim.assumptions
                     | &(&r_s.claim.assumptions - &crate::hash_set! {lb}))
@@ -1167,7 +683,7 @@ impl Proof {
                 let concs =
                     &(&l_s.claim.conclusions - &crate::hash_set! {la}) | &r_s.claim.conclusions;
                 let eigenvars = &l_s.claim.eigenvars | &r_s.claim.eigenvars;
-                Some(Proof {
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: concs,
@@ -1177,13 +693,20 @@ impl Proof {
                 })
             }
             ProofStep::ImplRight(p) => {
+                let rule = "ImplRight";
                 let assum_diff: HashSet<&Formula> = p
                     .claim
                     .assumptions
                     .difference(&self.claim.assumptions)
                     .collect();
                 if assum_diff.len() > 1 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Proof step adds more than one new Assumption on {}",
+                            p.claim
+                        ),
+                        rule,
+                    );
                 }
                 let conc_diff: HashSet<&Formula> = p
                     .claim
@@ -1191,31 +714,45 @@ impl Proof {
                     .difference(&self.claim.conclusions)
                     .collect();
                 if conc_diff.len() > 1 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Proof step adds more than one new Conclusion on {}",
+                            p.claim
+                        ),
+                        rule,
+                    );
                 }
-                let principal = self.claim.conclusions.iter().find_map(|g| match g {
-                    Formula::Implication(a, b)
-                        if assum_diff.iter().all(|x| *x == a.as_ref())
-                            && conc_diff.iter().all(|x| *x == b.as_ref()) =>
-                    {
-                        Some(g.clone())
+                let Some(principal) = self.claim.conclusions.iter().find(|g| match g {
+                    Formula::Implication(a, b) => {
+                        assum_diff.iter().all(|x| *x == a.as_ref())
+                            && conc_diff.iter().all(|x| *x == b.as_ref())
                     }
-                    _ => None,
-                })?;
-                let (la, lb) = match &principal {
-                    Formula::Implication(a, b) => (a.as_ref().clone(), b.as_ref().clone()),
-                    _ => unreachable!(),
+                    _ => false,
+                }) else {
+                    return self.fail(
+                        format!(
+                            "Sub-proof does not match an implication in previous conclusions on {}",
+                            p.claim
+                        ),
+                        rule,
+                    );
                 };
-                let p_s = p.strip()?;
+                let Formula::Implication(a, b) = principal else {
+                    unreachable!()
+                };
+                let (la, lb) = (a.as_ref().clone(), b.as_ref().clone());
+                let principal = principal.clone();
+                self.check_eigenvars(p, None, rule)?;
+                let p_s = self.sub_checked(p, rule)?;
                 if !p_s.claim.assumptions.contains(&la) && !p_s.claim.conclusions.contains(&lb) {
-                    return Some(p_s);
+                    return Ok(p_s);
                 }
                 let mut assms = p_s.claim.assumptions.clone();
                 assms.remove(&la);
                 let mut concs = p_s.claim.conclusions.clone();
                 concs.remove(&lb);
                 concs.insert(principal);
-                Some(Proof {
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: concs,
@@ -1225,50 +762,77 @@ impl Proof {
                 })
             }
             ProofStep::ForAllLeft(p) => {
-                if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return None;
-                }
+                let rule = "ForAllLeft";
                 let diff: HashSet<&Formula> = p
                     .claim
                     .assumptions
                     .difference(&self.claim.assumptions)
                     .collect();
                 if diff.len() > 1 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Proof step adds more than one new Assumption on {}",
+                            p.claim
+                        ),
+                        rule,
+                    );
                 }
-                let principal = self.claim.assumptions.iter().find_map(|g| match g {
-                    Formula::All(_, body)
-                        if diff.iter().all(|f| f.is_instance_of(body, 0).is_some()) =>
-                    {
-                        Some(g.clone())
-                    }
-                    _ => None,
-                })?;
                 let added = diff.iter().next().map(|f| (*f).clone());
-                let Formula::All(_, body) = &principal else {
-                    return None;
-                };
-                let witness: Option<Expr> = added.as_ref().and_then(|inst| {
-                    inst.is_instance_of(body, 0)
-                        .and_then(|s| s.lookup(0).cloned())
-                });
-                if let Some(w) = &witness {
-                    if !w
-                        .constants_with_arity()
-                        .is_subset(&self.claim.constants_with_arity())
-                    {
-                        return None;
+                // First-match is fine here: the witness scope check below is
+                // independent of which ∀ matched — witness terms come from the
+                // added instance itself, and constants are collected from the
+                // whole sequent, not per formula.
+                let mut principal_and_witness: Option<(Formula, Option<Expr>)> = None;
+                if let Some(inst) = &added {
+                    principal_and_witness =
+                        self.claim.assumptions.iter().find_map(|g| match g {
+                            Formula::All(_, body) => inst
+                                .is_instance_of(body, 0)
+                                .map(|s| (g.clone(), s.lookup(0).cloned())),
+                            _ => None,
+                        });
+                    let Some((_, witness)) = &principal_and_witness else {
+                        return self.fail(
+                            format!(
+                                "No ∀ in previous assumptions matches the sub-proof on {}",
+                                p.claim
+                            ),
+                            rule,
+                        );
+                    };
+                    if let Some(w) = witness {
+                        if !w
+                            .constants_with_arity()
+                            .is_subset(&self.claim.constants_with_arity())
+                        {
+                            return self.fail(
+                                format!(
+                                    "Witness {} uses constants not in scope on {}",
+                                    w, p.claim
+                                ),
+                                rule,
+                            );
+                        }
                     }
                 }
-                let p_s = p.strip()?;
-                // If the instance wasn't actually used by the stripped subproof,
+                if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
+                    return self.fail(
+                        format!("Proof step adds new Conclusion on {}", p.claim),
+                        rule,
+                    );
+                }
+                self.check_eigenvars(p, None, rule)?;
+                let p_s = self.sub_checked(p, rule)?;
+                // If the instance wasn't actually used by the pruned subproof,
                 // the ∀L application was wasteful — skip it.
                 let useful = added
                     .as_ref()
                     .map_or(false, |x| p_s.claim.assumptions.contains(x));
                 if !useful {
-                    return Some(p_s);
+                    return Ok(p_s);
                 }
+                let (principal, witness) =
+                    principal_and_witness.expect("added is Some, so a ∀ matched");
                 let mut assms = p_s.claim.assumptions.clone();
                 if let Some(x) = &added {
                     assms.remove(x);
@@ -1287,7 +851,7 @@ impl Proof {
                         }
                     }
                 }
-                Some(Proof {
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: p_s.claim.conclusions.clone(),
@@ -1297,50 +861,88 @@ impl Proof {
                 })
             }
             ProofStep::ForAllRight(p) => {
-                if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return None;
-                }
+                let rule = "ForAllRight";
                 let diff: HashSet<&Formula> = p
                     .claim
                     .conclusions
                     .difference(&self.claim.conclusions)
                     .collect();
                 if diff.len() > 1 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Proof step adds more than one new Conclusion on {}",
+                            p.claim
+                        ),
+                        rule,
+                    );
                 }
                 let self_free = self.claim.free_vars();
-                let principal = self.claim.conclusions.iter().find_map(|g| match g {
-                    Formula::All(_, body) => {
-                        let ok = diff.iter().all(|f| match f.is_instance_of(body, 0) {
+                let p_free = p.claim.free_vars();
+                let new_vars: Vec<&String> = p_free.difference(&self_free).collect();
+                if new_vars.len() > 1 {
+                    return self.fail(
+                        format!(
+                            "Sub-proof introduces more than one new free variable on {}",
+                            p.claim
+                        ),
+                        rule,
+                    );
+                }
+                let new_eigenvar: Option<&String> = new_vars.into_iter().next();
+                let added = diff.iter().next().map(|f| (*f).clone());
+                let mut principal: Option<Formula> = None;
+                if let Some(inst) = &added {
+                    principal = self.claim.conclusions.iter().find_map(|g| {
+                        let Formula::All(_, body) = g else {
+                            return None;
+                        };
+                        let ok = match inst.is_instance_of(body, 0) {
                             None => false,
                             Some(sub) if sub.bindings.is_empty() => true,
-                            Some(sub) => match sub.lookup(0) {
-                                Some(Expr::Free(y)) => !self_free.contains(y),
+                            Some(sub) => match (sub.lookup(0), new_eigenvar) {
+                                (Some(Expr::Free(y)), Some(intro)) => y == intro,
                                 _ => false,
                             },
-                        });
+                        };
                         if ok { Some(g.clone()) } else { None }
+                    });
+                    if principal.is_none() {
+                        return self.fail(
+                            format!(
+                                "No ∀ in previous conclusions matches the sub-proof with a fresh eigenvariable on {}",
+                                p.claim
+                            ),
+                            rule,
+                        );
                     }
-                    _ => None,
-                })?;
-                let added = diff.iter().next().map(|f| (*f).clone());
-                let new_eigenvar = p
+                }
+                if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
+                    return self.fail(
+                        format!("Proof step adds new Assumption on {}", p.claim),
+                        rule,
+                    );
+                }
+                self.check_eigenvars(p, new_eigenvar.map(|s| s.as_str()), rule)?;
+                let new_claim_eigenvar = p
                     .claim
                     .eigenvars
                     .difference(&self.claim.eigenvars)
                     .next()
                     .cloned();
-                let p_s = p.strip()?;
+                let p_s = self.sub_checked(p, rule)?;
+                let Some(added) = added else {
+                    // The step added nothing — skip it.
+                    return Ok(p_s);
+                };
+                let principal = principal.expect("added is Some, so a ∀ matched");
                 let mut concs = p_s.claim.conclusions.clone();
-                if let Some(x) = &added {
-                    concs.remove(x);
-                }
+                concs.remove(&added);
                 concs.insert(principal);
                 let mut eigenvars = p_s.claim.eigenvars.clone();
-                if let Some(ev) = &new_eigenvar {
+                if let Some(ev) = &new_claim_eigenvar {
                     eigenvars.remove(ev);
                 }
-                Some(Proof {
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: p_s.claim.assumptions.clone(),
                         conclusions: concs,
@@ -1350,50 +952,88 @@ impl Proof {
                 })
             }
             ProofStep::ExistsLeft(p) => {
-                if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
-                    return None;
-                }
+                let rule = "ExistsLeft";
                 let diff: HashSet<&Formula> = p
                     .claim
                     .assumptions
                     .difference(&self.claim.assumptions)
                     .collect();
                 if diff.len() > 1 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Proof step adds more than one new Assumption on {}",
+                            p.claim
+                        ),
+                        rule,
+                    );
                 }
                 let self_free = self.claim.free_vars();
-                let principal = self.claim.assumptions.iter().find_map(|g| match g {
-                    Formula::Exists(_, body) => {
-                        let ok = diff.iter().all(|f| match f.is_instance_of(body, 0) {
+                let p_free = p.claim.free_vars();
+                let new_vars: Vec<&String> = p_free.difference(&self_free).collect();
+                if new_vars.len() > 1 {
+                    return self.fail(
+                        format!(
+                            "Sub-proof introduces more than one new free variable on {}",
+                            p.claim
+                        ),
+                        rule,
+                    );
+                }
+                let new_eigenvar: Option<&String> = new_vars.into_iter().next();
+                let added = diff.iter().next().map(|f| (*f).clone());
+                let mut principal: Option<Formula> = None;
+                if let Some(inst) = &added {
+                    principal = self.claim.assumptions.iter().find_map(|g| {
+                        let Formula::Exists(_, body) = g else {
+                            return None;
+                        };
+                        let ok = match inst.is_instance_of(body, 0) {
                             None => false,
                             Some(sub) if sub.bindings.is_empty() => true,
-                            Some(sub) => match sub.lookup(0) {
-                                Some(Expr::Free(y)) => !self_free.contains(y),
+                            Some(sub) => match (sub.lookup(0), new_eigenvar) {
+                                (Some(Expr::Free(y)), Some(intro)) => y == intro,
                                 _ => false,
                             },
-                        });
+                        };
                         if ok { Some(g.clone()) } else { None }
+                    });
+                    if principal.is_none() {
+                        return self.fail(
+                            format!(
+                                "No ∃ in previous assumptions matches the sub-proof with a fresh eigenvariable on {}",
+                                p.claim
+                            ),
+                            rule,
+                        );
                     }
-                    _ => None,
-                })?;
-                let added = diff.iter().next().map(|f| (*f).clone());
-                let new_eigenvar = p
+                }
+                if !p.claim.conclusions.is_subset(&self.claim.conclusions) {
+                    return self.fail(
+                        format!("Proof step adds new Conclusion on {}", p.claim),
+                        rule,
+                    );
+                }
+                self.check_eigenvars(p, new_eigenvar.map(|s| s.as_str()), rule)?;
+                let new_claim_eigenvar = p
                     .claim
                     .eigenvars
                     .difference(&self.claim.eigenvars)
                     .next()
                     .cloned();
-                let p_s = p.strip()?;
+                let p_s = self.sub_checked(p, rule)?;
+                let Some(added) = added else {
+                    // The step added nothing — skip it.
+                    return Ok(p_s);
+                };
+                let principal = principal.expect("added is Some, so an ∃ matched");
                 let mut assms = p_s.claim.assumptions.clone();
-                if let Some(x) = &added {
-                    assms.remove(x);
-                }
+                assms.remove(&added);
                 assms.insert(principal);
                 let mut eigenvars = p_s.claim.eigenvars.clone();
-                if let Some(ev) = &new_eigenvar {
+                if let Some(ev) = &new_claim_eigenvar {
                     eigenvars.remove(ev);
                 }
-                Some(Proof {
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: assms,
                         conclusions: p_s.claim.conclusions.clone(),
@@ -1403,50 +1043,74 @@ impl Proof {
                 })
             }
             ProofStep::ExistsRight(p) => {
-                if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
-                    return None;
-                }
+                let rule = "ExistsRight";
                 let diff: HashSet<&Formula> = p
                     .claim
                     .conclusions
                     .difference(&self.claim.conclusions)
                     .collect();
                 if diff.len() > 1 {
-                    return None;
+                    return self.fail(
+                        format!(
+                            "Proof step adds more than one new Conclusion on {}",
+                            p.claim
+                        ),
+                        rule,
+                    );
                 }
-                let principal = self.claim.conclusions.iter().find_map(|g| match g {
-                    Formula::Exists(_, body)
-                        if diff.iter().all(|f| f.is_instance_of(body, 0).is_some()) =>
-                    {
-                        Some(g.clone())
-                    }
-                    _ => None,
-                })?;
                 let added = diff.iter().next().map(|f| (*f).clone());
-                let Formula::Exists(_, body) = &principal else {
-                    return None;
-                };
-                let witness: Option<Expr> = added.as_ref().and_then(|inst| {
-                    inst.is_instance_of(body, 0)
-                        .and_then(|s| s.lookup(0).cloned())
-                });
-                if let Some(w) = &witness {
-                    if !w
-                        .constants_with_arity()
-                        .is_subset(&self.claim.constants_with_arity())
-                    {
-                        return None;
+                // First-match is fine here for the same reason as in ForAllLeft.
+                let mut principal_and_witness: Option<(Formula, Option<Expr>)> = None;
+                if let Some(inst) = &added {
+                    principal_and_witness =
+                        self.claim.conclusions.iter().find_map(|g| match g {
+                            Formula::Exists(_, body) => inst
+                                .is_instance_of(body, 0)
+                                .map(|s| (g.clone(), s.lookup(0).cloned())),
+                            _ => None,
+                        });
+                    let Some((_, witness)) = &principal_and_witness else {
+                        return self.fail(
+                            format!(
+                                "No ∃ in previous conclusions matches the sub-proof on {}",
+                                p.claim
+                            ),
+                            rule,
+                        );
+                    };
+                    if let Some(w) = witness {
+                        if !w
+                            .constants_with_arity()
+                            .is_subset(&self.claim.constants_with_arity())
+                        {
+                            return self.fail(
+                                format!(
+                                    "Witness {} uses constants not in scope on {}",
+                                    w, p.claim
+                                ),
+                                rule,
+                            );
+                        }
                     }
                 }
-                let p_s = p.strip()?;
-                // If the instance wasn't actually used by the stripped subproof,
+                if !p.claim.assumptions.is_subset(&self.claim.assumptions) {
+                    return self.fail(
+                        format!("Proof step adds new Assumption on {}", p.claim),
+                        rule,
+                    );
+                }
+                self.check_eigenvars(p, None, rule)?;
+                let p_s = self.sub_checked(p, rule)?;
+                // If the instance wasn't actually used by the pruned subproof,
                 // the ∃R application was wasteful — skip it.
                 let useful = added
                     .as_ref()
                     .map_or(false, |x| p_s.claim.conclusions.contains(x));
                 if !useful {
-                    return Some(p_s);
+                    return Ok(p_s);
                 }
+                let (principal, witness) =
+                    principal_and_witness.expect("added is Some, so an ∃ matched");
                 let mut concs = p_s.claim.conclusions.clone();
                 if let Some(x) = &added {
                     concs.remove(x);
@@ -1465,7 +1129,7 @@ impl Proof {
                         }
                     }
                 }
-                Some(Proof {
+                Ok(Proof {
                     claim: Sequent {
                         assumptions: p_s.claim.assumptions.clone(),
                         conclusions: concs,
@@ -1527,6 +1191,12 @@ mod tests {
             "exists y. forall x. p(x,y) -> forall x. exists y. p(x,y)",
             "forall x. p(x) & ~p(x) => forall x. 0",
             "~(forall x. p(x) -> exists x. p(x)) -> ~exists x. 1",
+            // Regressions: vacuous quantifier bodies used to panic the search.
+            "forall x. P -> P",
+            "P -> exists x. P",
+            // ⊤ desugars to ¬⊥ and must be provable.
+            "1",
+            "P -> 1",
         ];
         for s in &formulas {
             let proof = try_prove(s).unwrap_or_else(|| panic!("no proof for: {}", s));

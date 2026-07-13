@@ -21,7 +21,6 @@ pub trait Typst {
 
 struct Syntax {
     bot: &'static str,
-    top: &'static str,
     neg: &'static str,
     and: &'static str,
     or: &'static str,
@@ -37,7 +36,6 @@ struct Syntax {
 
 const LATEX_SYN: Syntax = Syntax {
     bot: "\\bot",
-    top: "\\top",
     neg: "\\neg ",
     and: " \\wedge ",
     or: " \\vee ",
@@ -50,7 +48,6 @@ const LATEX_SYN: Syntax = Syntax {
 
 const TYPST_SYN: Syntax = Syntax {
     bot: "bot",
-    top: "top",
     neg: "not ",
     and: " and ",
     or: " or ",
@@ -129,7 +126,6 @@ fn write_formula<'a>(
     }
     match f {
         Formula::Bot => out.push_str(syn.bot),
-        Formula::Top => out.push_str(syn.top),
         Formula::Pred(name, args) => {
             out.push_str(&(syn.name)(name));
             if !args.is_empty() {

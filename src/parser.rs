@@ -107,8 +107,9 @@ impl Parser {
                 Ok(Formula::Bot)
             }
             Token::Top => {
+                // ⊤ is sugar for ¬⊥; the calculus has no ⊤ rules of its own.
                 self.advance()?;
-                Ok(Formula::Top)
+                Ok(Formula::Not(Box::new(Formula::Bot)))
             }
             Token::Identifier(name) => {
                 let identifier = name.clone();
@@ -150,71 +151,56 @@ impl Parser {
                 self.expect(Token::RightParen)?;
                 Ok(formula)
             }
-            Token::ForAll => {
-                self.advance()?;
-                let var = match &self.current_token {
-                    Token::Identifier(v) => {
-                        let v = v.clone();
-                        self.advance()?;
-                        v
-                    }
-                    _ => {
-                        return Err(vec![format!(
-                            "expected bound variable at byte {}, found {:?}",
-                            self.current_pos, self.current_token,
-                        )])
-                        .ctx(|| format!("while parsing forall-quantifier at byte {}", start));
-                    }
-                };
-                self.expect(Token::Dot)?;
-                let mut new_bound_vars = bound_vars.clone();
-                let next_idx = new_bound_vars
-                    .values()
-                    .copied()
-                    .max()
-                    .map(|m| m + 1)
-                    .unwrap_or(0);
-                new_bound_vars.insert(var.clone(), next_idx);
-                let body = self
-                    .parse_atomic_formula(&new_bound_vars)
-                    .ctx(|| format!("while parsing body of forall-quantifier at byte {}", start))?;
-                Ok(Formula::All(var, Box::new(body)))
-            }
-            Token::Exists => {
-                self.advance()?;
-                let var = match &self.current_token {
-                    Token::Identifier(v) => {
-                        let v = v.clone();
-                        self.advance()?;
-                        v
-                    }
-                    _ => {
-                        return Err(vec![format!(
-                            "expected bound variable at byte {}, found {:?}",
-                            self.current_pos, self.current_token,
-                        )])
-                        .ctx(|| format!("while parsing exists-quantifier at byte {}", start));
-                    }
-                };
-                self.expect(Token::Dot)?;
-                let mut new_bound_vars = bound_vars.clone();
-                let next_idx = new_bound_vars
-                    .values()
-                    .copied()
-                    .max()
-                    .map(|m| m + 1)
-                    .unwrap_or(0);
-                new_bound_vars.insert(var.clone(), next_idx);
-                let body = self
-                    .parse_atomic_formula(&new_bound_vars)
-                    .ctx(|| format!("while parsing body of exists-quantifier at byte {}", start))?;
-                Ok(Formula::Exists(var, Box::new(body)))
-            }
+            Token::ForAll => self.parse_quantifier(bound_vars, Formula::All, "forall", start),
+            Token::Exists => self.parse_quantifier(bound_vars, Formula::Exists, "exists", start),
             _ => Err(vec![format!(
                 "expected formula at byte {}, found {:?}",
                 start, self.current_token,
             )]),
         }
+    }
+
+    /// Shared body of the ∀ / ∃ arms of `parse_atomic_formula`. `label` is the
+    /// quantifier's name for error messages; the quantifier token itself is
+    /// still the current token on entry.
+    fn parse_quantifier(
+        &mut self,
+        bound_vars: &HashMap<String, usize>,
+        ctor: fn(String, Box<Formula>) -> Formula,
+        label: &str,
+        start: usize,
+    ) -> ParseResult<Formula> {
+        self.advance()?;
+        let var = match &self.current_token {
+            Token::Identifier(v) => {
+                let v = v.clone();
+                self.advance()?;
+                v
+            }
+            _ => {
+                return Err(vec![format!(
+                    "expected bound variable at byte {}, found {:?}",
+                    self.current_pos, self.current_token,
+                )])
+                .ctx(|| format!("while parsing {}-quantifier at byte {}", label, start));
+            }
+        };
+        self.expect(Token::Dot)?;
+        let mut new_bound_vars = bound_vars.clone();
+        let next_idx = new_bound_vars
+            .values()
+            .copied()
+            .max()
+            .map(|m| m + 1)
+            .unwrap_or(0);
+        new_bound_vars.insert(var.clone(), next_idx);
+        let body = self.parse_atomic_formula(&new_bound_vars).ctx(|| {
+            format!(
+                "while parsing body of {}-quantifier at byte {}",
+                label, start
+            )
+        })?;
+        Ok(ctor(var, Box::new(body)))
     }
 
     fn peek_binop(&self) -> Option<BinOp> {
